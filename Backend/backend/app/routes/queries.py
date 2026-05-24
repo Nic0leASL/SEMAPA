@@ -1,5 +1,7 @@
 import logging
+from typing import Optional, List
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from app.cassandra.connection import CassandraConnection
 
 logger = logging.getLogger("QueriesRoute")
@@ -290,5 +292,259 @@ async def get_mapa_vivienda(id: str):
         }
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- NEW SCHEMAS AND ENDPOINTS ---
+
+# Pydantic Schemas for validation
+class DistritoCreate(BaseModel):
+    distrito: int
+    sub_distrito: int
+    zona: str
+    sub_alcaldia: str
+    gateway: Optional[str] = "Desconocido"
+    altitude: Optional[float] = 0.0
+    codigo: Optional[int] = 0
+    habitantes: Optional[int] = 0
+    r1: Optional[int] = 0
+    r2: Optional[int] = 0
+    r3: Optional[int] = 0
+    r4: Optional[int] = 0
+    c: Optional[int] = 0
+    ce: Optional[int] = 0
+    i: Optional[int] = 0
+    p: Optional[int] = 0
+    s: Optional[int] = 0
+    total: Optional[int] = 0
+
+class ContratoCreate(BaseModel):
+    numero_contrato: str
+    numero_catastro: str
+    titular_contrato: str
+    ci_titular: str
+    categoria: str
+    subcategoria: Optional[str] = ""
+    medidor_iot: str
+    fecha_contrato: str
+    estado_contrato: str
+    diametro_conexion: str
+    tipo_servicio: str
+
+# 1. Geographic Demographic endpoints (Zonas, Subdistritos, Habitantes)
+@router.get("/distritos/zonas")
+async def get_distritos_zonas():
+    session = get_session()
+    try:
+        rows = list(session.execute("SELECT distrito, sub_distrito, zona, sub_alcaldia, habitantes FROM distritos"))
+        # Group by zona to aggregate sub_distritos and inhabitants
+        zonas_map = {}
+        for r in rows:
+            zona_name = r.zona.strip() if r.zona else "Desconocido"
+            if zona_name not in zonas_map:
+                zonas_map[zona_name] = {
+                    "zona": zona_name,
+                    "sub_distritos": set(),
+                    "distritos": set(),
+                    "sub_alcaldia": r.sub_alcaldia,
+                    "habitantes_total": 0
+                }
+            if r.sub_distrito:
+                zonas_map[zona_name]["sub_distritos"].add(r.sub_distrito)
+            if r.distrito:
+                zonas_map[zona_name]["distritos"].add(r.distrito)
+            if r.habitantes:
+                zonas_map[zona_name]["habitantes_total"] += r.habitantes
+
+        result = []
+        for z_name, data in zonas_map.items():
+            result.append({
+                "zona": z_name,
+                "distritos": list(data["distritos"]),
+                "sub_distritos": list(data["sub_distritos"]),
+                "sub_alcaldia": data["sub_alcaldia"],
+                "habitantes_total": data["habitantes_total"]
+            })
+        return sorted(result, key=lambda x: x["zona"])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/distritos/zonas/{nombre_zona}")
+async def get_zona_details(nombre_zona: str):
+    session = get_session()
+    try:
+        # Fetch all distritos and filter in Python
+        rows = list(session.execute("SELECT distrito, sub_distrito, zona, sub_alcaldia, habitantes, total FROM distritos"))
+        matching = [r for r in rows if r.zona and r.zona.lower().strip() == nombre_zona.lower().strip()]
+        if not matching:
+            raise HTTPException(status_code=404, detail=f"Zona '{nombre_zona}' no encontrada.")
+            
+        sub_distritos = list(set(r.sub_distrito for r in matching if r.sub_distrito))
+        distritos_list = list(set(r.distrito for r in matching if r.distrito))
+        habitantes = sum(r.habitantes for r in matching if r.habitantes)
+        total_predios = sum(r.total for r in matching if r.total)
+        
+        return {
+            "zona": nombre_zona,
+            "distritos": distritos_list,
+            "sub_distritos": sub_distritos,
+            "sub_alcaldia": matching[0].sub_alcaldia,
+            "habitantes_total": habitantes,
+            "total_predios_estimados": total_predios
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/distritos")
+async def create_distrito(dist: DistritoCreate):
+    session = get_session()
+    try:
+        stmt = session.prepare("""
+            INSERT INTO distritos (
+                distrito, sub_distrito, zona, sub_alcaldia, gateway, altitude, codigo, habitantes,
+                r1, r2, r3, r4, c, ce, i, p, s, total
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """)
+        
+        session.execute(stmt, (
+            dist.distrito, dist.sub_distrito, dist.zona, dist.sub_alcaldia, dist.gateway,
+            dist.altitude, dist.codigo, dist.habitantes, dist.r1, dist.r2, dist.r3,
+            dist.r4, dist.c, dist.ce, dist.i, dist.p, dist.s, dist.total
+        ))
+        
+        return {"status": "success", "message": f"Distrito {dist.distrito} en zona {dist.zona} insertado correctamente."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 2. Advanced Contracts Search endpoints
+@router.get("/contratos/buscar")
+async def buscar_contratos(
+    numero_contrato: Optional[str] = None,
+    titular_contrato: Optional[str] = None,
+    ci_titular: Optional[str] = None,
+    medidor_iot: Optional[str] = None,
+    estado_contrato: Optional[str] = None,
+    limit: int = 100
+):
+    session = get_session()
+    try:
+        if numero_contrato:
+            stmt = session.prepare("SELECT * FROM contratos WHERE numero_contrato = ?")
+            rows = list(session.execute(stmt, [numero_contrato]))
+        elif ci_titular:
+            stmt = session.prepare("SELECT * FROM contratos_by_ci WHERE ci_titular = ?")
+            rows = list(session.execute(stmt, [ci_titular]))
+        else:
+            # Safe scan in Python limited to 2000 records to prevent OOM / Cassandra timeout
+            query = "SELECT * FROM contratos LIMIT 2000"
+            rows = list(session.execute(query))
+            
+            # Apply filters in memory
+            if titular_contrato:
+                t_lower = titular_contrato.lower()
+                rows = [r for r in rows if r.titular_contrato and t_lower in r.titular_contrato.lower()]
+            if medidor_iot:
+                rows = [r for r in rows if r.medidor_iot and r.medidor_iot == medidor_iot]
+            if estado_contrato:
+                rows = [r for r in rows if r.estado_contrato and r.estado_contrato.lower() == estado_contrato.lower()]
+                
+            rows = rows[:limit]
+            
+        return [
+            {
+                "numero_contrato": r.numero_contrato,
+                "numero_catastro": r.numero_catastro,
+                "titular_contrato": r.titular_contrato,
+                "ci_titular": r.ci_titular,
+                "categoria": r.categoria,
+                "subcategoria": r.subcategoria,
+                "medidor_iot": r.medidor_iot,
+                "fecha_contrato": r.fecha_contrato,
+                "estado_contrato": r.estado_contrato,
+                "diametro_conexion": r.diametro_conexion,
+                "tipo_servicio": r.tipo_servicio
+            } for r in rows
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/contratos")
+async def create_contrato(contrato: ContratoCreate):
+    session = get_session()
+    try:
+        # 1. Insert into contratos
+        stmt1 = session.prepare("""
+            INSERT INTO contratos (
+                numero_contrato, numero_catastro, titular_contrato, ci_titular, categoria,
+                subcategoria, medidor_iot, fecha_contrato, estado_contrato, diametro_conexion, tipo_servicio
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """)
+        session.execute(stmt1, (
+            contrato.numero_contrato, contrato.numero_catastro, contrato.titular_contrato,
+            contrato.ci_titular, contrato.categoria, contrato.subcategoria, contrato.medidor_iot,
+            contrato.fecha_contrato, contrato.estado_contrato, contrato.diametro_conexion, contrato.tipo_servicio
+        ))
+        
+        # 2. Insert into contratos_by_ci (denormalized table)
+        stmt2 = session.prepare("""
+            INSERT INTO contratos_by_ci (
+                ci_titular, numero_contrato, numero_catastro, titular_contrato, categoria,
+                subcategoria, medidor_iot, fecha_contrato, estado_contrato, diametro_conexion, tipo_servicio
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """)
+        session.execute(stmt2, (
+            contrato.ci_titular, contrato.numero_contrato, contrato.numero_catastro,
+            contrato.titular_contrato, contrato.categoria, contrato.subcategoria, contrato.medidor_iot,
+            contrato.fecha_contrato, contrato.estado_contrato, contrato.diametro_conexion, contrato.tipo_servicio
+        ))
+        
+        return {"status": "success", "message": f"Contrato {contrato.numero_contrato} registrado correctamente de forma consistente."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/distritos")
+async def get_all_distritos(limit: int = 100):
+    session = get_session()
+    try:
+        rows = list(session.execute(f"SELECT distrito, sub_distrito, zona, sub_alcaldia, gateway, altitude, codigo, habitantes, total FROM distritos LIMIT {limit}"))
+        return [
+            {
+                "distrito": r.distrito,
+                "sub_distrito": r.sub_distrito,
+                "zona": r.zona,
+                "sub_alcaldia": r.sub_alcaldia,
+                "gateway": r.gateway,
+                "altitude": r.altitude,
+                "codigo": r.codigo,
+                "habitantes": r.habitantes,
+                "total": r.total
+            } for r in rows
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/contratos")
+async def get_all_contratos(limit: int = 100):
+    session = get_session()
+    try:
+        rows = list(session.execute(f"SELECT numero_contrato, numero_catastro, titular_contrato, ci_titular, categoria, subcategoria, medidor_iot, fecha_contrato, estado_contrato, diametro_conexion, tipo_servicio FROM contratos LIMIT {limit}"))
+        return [
+            {
+                "numero_contrato": r.numero_contrato,
+                "numero_catastro": r.numero_catastro,
+                "titular_contrato": r.titular_contrato,
+                "ci_titular": r.ci_titular,
+                "categoria": r.categoria,
+                "subcategoria": r.subcategoria,
+                "medidor_iot": r.medidor_iot,
+                "fecha_contrato": r.fecha_contrato,
+                "estado_contrato": r.estado_contrato,
+                "diametro_conexion": r.diametro_conexion,
+                "tipo_servicio": r.tipo_servicio
+            } for r in rows
+        ]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

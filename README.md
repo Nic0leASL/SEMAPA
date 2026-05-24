@@ -62,106 +62,6 @@ Ambos compañeros deben seguir estos sencillos pasos:
 
 ---
 
-## 4. Configuración de docker-compose.primary.yml (PC Principal)
-
-En la **PC Principal (Mani: 100.71.121.5)**, el archivo `docker-compose.primary.yml` levanta el Nodo 1 (que actúa como Seed del clúster), la API del Backend y la interfaz del Dashboard.
-
-```yaml
-version: '3.8'
-
-services:
-  cassandra-node1:
-    image: cassandra:4.1
-    container_name: cassandra-node1
-    ports:
-      - "9042:9042"      # Puerto CQL nativo
-      - "7000:7000"      # Puerto de comunicación/gossip inter-nodo (Crítico para Tailscale)
-      - "7199:7199"      # Puerto JMX para nodetool status/ring
-    environment:
-      - CASSANDRA_CLUSTER_NAME=SEMAPA_CLUSTER
-      - CASSANDRA_SEEDS=100.71.121.5                 # IP Tailscale de PC 1 (Seed)
-      - CASSANDRA_BROADCAST_ADDRESS=100.71.121.5     # Anuncia esta IP de Tailscale a otros nodos
-      - CASSANDRA_RPC_ADDRESS=0.0.0.0                # Escucha en todas las interfaces para conexiones de clientes
-      - CASSANDRA_BROADCAST_RPC_ADDRESS=100.71.121.5 # Anuncia esta IP para que la API se conecte
-      - CASSANDRA_ENDPOINT_SNITCH=SimpleSnitch
-      - CASSANDRA_DC=dc1
-      - CASSANDRA_RACK=rack1
-      - CASSANDRA_NUM_TOKENS=16
-    volumes:
-      - cassandra_node1_data:/var/lib/cassandra
-    healthcheck:
-      test: ["CMD-SHELL", "cqlsh -e 'describe keyspaces' || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-
-  backend-api:
-    build:
-      context: ./Backend/backend
-      dockerfile: Dockerfile
-    container_name: backend-api
-    ports:
-      - "8000:8000"
-    environment:
-      - CASSANDRA_CONTACT_POINTS=100.71.121.5
-      - CASSANDRA_PORT=9042
-      - API_PORT=8000
-      - NODE_NAME=API_Principal_Nodo1
-    depends_on:
-      cassandra-node1:
-        condition: service_healthy
-    volumes:
-      - ./Backend/backend/uploads:/app/uploads
-      - ./Backend/datos:/app/datos:ro
-
-  frontend-dashboard:
-    image: nginx:alpine
-    container_name: frontend-dashboard
-    ports:
-      - "3000:80"
-    volumes:
-      - ./Dasboard:/usr/share/nginx/html:ro
-
-volumes:
-  cassandra_node1_data:
-```
-
----
-
-## 5. Configuración de docker-compose.secondary.yml (PC Secundaria)
-
-En la **PC Secundaria (Compañero: 100.114.64.8)**, se clona el proyecto y se utiliza el archivo `docker-compose.secondary.yml` para levantar únicamente el Nodo 2 de Cassandra.
-
-```yaml
-version: '3.8'
-
-services:
-  cassandra-node2:
-    image: cassandra:4.1
-    container_name: cassandra-node2
-    ports:
-      - "9042:9042"      # Puerto CQL nativo
-      - "7000:7000"      # Puerto de comunicación/gossip inter-nodo (Crítico para Tailscale)
-      - "7199:7199"      # Puerto JMX para nodetool status/ring
-    environment:
-      - CASSANDRA_CLUSTER_NAME=SEMAPA_CLUSTER
-      - CASSANDRA_SEEDS=100.71.121.5                 # IP Tailscale de PC 1 (Seed/Principal)
-      - CASSANDRA_BROADCAST_ADDRESS=100.114.64.8     # Anuncia esta IP de Tailscale (PC Secundaria)
-      - CASSANDRA_RPC_ADDRESS=0.0.0.0                # Escucha en todas las interfaces para conexiones
-      - CASSANDRA_BROADCAST_RPC_ADDRESS=100.114.64.8 # Anuncia esta IP para que los clientes se conecten
-      - CASSANDRA_ENDPOINT_SNITCH=SimpleSnitch
-      - CASSANDRA_DC=dc1
-      - CASSANDRA_RACK=rack1
-      - CASSANDRA_NUM_TOKENS=16
-    volumes:
-      - cassandra_node2_data:/var/lib/cassandra
-
-volumes:
-  cassandra_node2_data:
-```
-
----
-
 ## 6. Comandos Finales Simples de Arranque
 
 ### En la PC Principal (Mani)
@@ -185,6 +85,8 @@ Para validar que ambos nodos se hayan descubierto mutuamente y formado el anillo
 ```bash
 docker exec -it cassandra-node1 nodetool status
 ```
+ver ti todo esta bien;
+docker exec -it cassandra-node1 nodetool status
 
 Debe mostrar una salida con **ambos nodos en estado Up Normal (`UN`)**:
 

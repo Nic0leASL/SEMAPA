@@ -321,6 +321,11 @@ class ETLService:
         # Load data
         df = pd.read_csv(filepath, encoding='latin1')
         
+        # Clean numeric fields and fill NaNs with 0 to prevent type conversion errors
+        df['lecturaAnterior'] = pd.to_numeric(df['lecturaAnterior'], errors='coerce').fillna(0).astype(int)
+        df['LecturaActual'] = pd.to_numeric(df['LecturaActual'], errors='coerce').fillna(0).astype(int)
+        df['radiobase'] = pd.to_numeric(df['radiobase'], errors='coerce').fillna(0).astype(int)
+        
         # 1. Parse dates and sort
         logger.info("Parsing dates and sorting for deduplication...")
         df['parsed_date'] = pd.to_datetime(df['fechaHoraLectura'], format='%m/%d/%y %H:%M')

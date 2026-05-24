@@ -1,0 +1,12 @@
+{
+  "name": "semapa-backend",
+  "version": "1.0.0",
+  "description": "NPM wrapper for the SEMAPA Python FastAPI distributed backend",
+  "scripts": {
+    "install-deps": "pip install -r backend/requirements.txt",
+    "dev": "cd backend && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload",
+    "start": "cd backend && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+  },
+  "author": "Sistemas Distribuidos",
+  "license": "ISC"
+}
