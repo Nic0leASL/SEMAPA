@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { Activity, AlertTriangle, Search, Zap, Cpu } from 'lucide-react';
+import { Activity, AlertTriangle, Search, Zap } from 'lucide-react';
 import SemapaMap from '../components/SemapaMap';
 import { dashboardMockData } from '../mockData';
 
@@ -11,12 +11,7 @@ export default function GerenciaDashboard() {
   const [isMocked, setIsMocked] = useState(true);
 
   useEffect(() => {
-    if (!apiConnected) {
-      setData(dashboardMockData.gerencia);
-      setRecentErrors([]);
-      setIsMocked(true);
-      return;
-    }
+    if (!apiConnected) return;
 
     const fetchData = async () => {
       try {
@@ -51,12 +46,16 @@ export default function GerenciaDashboard() {
     fetchData();
   }, [apiConnected, apiUrl]);
 
+  const effectiveIsMocked = !apiConnected || isMocked;
+  const effectiveData = !apiConnected ? dashboardMockData.gerencia : data;
+  const effectiveRecentErrors = apiConnected ? recentErrors : [];
+
   return (
     <div className="dashboard-view animate-fade-in" style={{ animation: 'slideDown 0.4s ease-out' }}>
       <div className="top-header">
         <h2 className="page-title">Dashboard Gerencia Operativa</h2>
-        <span className={`api-mode-pill ${!isMocked ? 'mode-realtime' : 'mode-mocked'}`}>
-          {!isMocked ? 'Tiempo Real' : 'Modo Mock'}
+        <span className={`api-mode-pill ${!effectiveIsMocked ? 'mode-realtime' : 'mode-mocked'}`}>
+          {!effectiveIsMocked ? 'Tiempo Real' : 'Modo Mock'}
         </span>
       </div>
 
@@ -66,7 +65,7 @@ export default function GerenciaDashboard() {
             <span className="metric-label">Medidores IoT Operativos</span>
             <Activity className="metric-icon" size={20} />
           </div>
-          <span className="metric-value">{data.medidoresActivos}</span>
+          <span className="metric-value">{effectiveData.medidoresActivos}</span>
           <span className="metric-trend trend-up">Transmitiendo Señal</span>
         </div>
         
@@ -75,7 +74,7 @@ export default function GerenciaDashboard() {
             <span className="metric-label">Medidores Dañados / Críticos</span>
             <AlertTriangle className="metric-icon" size={20} style={{ color: 'var(--accent-red)', background: 'rgba(239, 68, 68, 0.1)' }} />
           </div>
-          <span className="metric-value">{data.medidoresDanados}</span>
+          <span className="metric-value">{effectiveData.medidoresDanados}</span>
           <span className="metric-trend trend-down">Requieren Mantenimiento</span>
         </div>
         
@@ -84,7 +83,7 @@ export default function GerenciaDashboard() {
             <span className="metric-label">Lecturas Recibidas Hoy</span>
             <Zap className="metric-icon" size={20} style={{ color: 'var(--accent-purple)', background: 'rgba(139, 92, 246, 0.1)' }} />
           </div>
-          <span className="metric-value">{data.lecturasHoy}</span>
+          <span className="metric-value">{effectiveData.lecturasHoy}</span>
           <span className="metric-trend trend-up">Volumen Diario ETL</span>
         </div>
 
@@ -93,7 +92,7 @@ export default function GerenciaDashboard() {
             <span className="metric-label">Anomalías Detectadas</span>
             <Search className="metric-icon" size={20} style={{ color: 'var(--accent-amber)', background: 'rgba(245, 158, 11, 0.1)' }} />
           </div>
-          <span className="metric-value">{data.alertasAnomalias}</span>
+          <span className="metric-value">{effectiveData.alertasAnomalias}</span>
           <span className="metric-trend trend-down">Fugas o fraudes posibles</span>
         </div>
       </div>
@@ -101,11 +100,11 @@ export default function GerenciaDashboard() {
       <div className="section-grid" style={{ marginTop: '2rem' }}>
         <div className="data-card glass">
           <h3>Mapa Operativo (Alertas & Fallas)</h3>
-          <SemapaMap apiUrl={apiUrl} apiConnected={apiConnected} />
+          <SemapaMap />
         </div>
 
         <div className="data-card glass">
-          {isMocked ? (
+          {effectiveIsMocked ? (
             <>
               <h3>Top Errores de Infraestructura IoT</h3>
               <table style={{ marginTop: '0.5rem' }}>
@@ -117,7 +116,7 @@ export default function GerenciaDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.erroresTop.map((err) => (
+                  {effectiveData.erroresTop.map((err) => (
                     <tr key={err.id}>
                       <td style={{ fontWeight: '500' }}>{err.tipo}</td>
                       <td>{err.cantidad}</td>
@@ -143,7 +142,7 @@ export default function GerenciaDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.zonasConFallas.slice(0, 3).map((z, idx) => (
+                    {effectiveData.zonasConFallas.slice(0, 3).map((z, idx) => (
                       <tr key={idx}>
                         <td style={{ fontWeight: '500' }}>{z.zona}</td>
                         <td style={{ color: 'var(--accent-red)', fontWeight: '600' }}>{z.cantidad_errores}</td>
@@ -164,7 +163,7 @@ export default function GerenciaDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {recentErrors.slice(0, 3).map((err, idx) => (
+                    {effectiveRecentErrors.slice(0, 3).map((err, idx) => (
                       <tr key={idx}>
                         <td style={{ fontFamily: 'monospace', color: 'var(--accent-cyan)' }}>{err.medidor_iot}</td>
                         <td>

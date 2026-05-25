@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { MapContainer, TileLayer, Polygon, Tooltip, CircleMarker, Popup, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { districtsCochabamba } from '../../distritos_cochabamba (1)';
-import { subalcaldiasCochabamba } from '../../subalcaldias_cochabamba';
 import { subdistritosCochabamba } from '../../subdistritos_cochabamba';
 import { zonasCochabamba } from '../../zonas_cochabamba';
 import { dashboardMockData } from '../mockData';
@@ -39,35 +38,25 @@ function MapEventsHandler({ onZoomChange, onBoundsChange }) {
   return null;
 }
 
-export default function SemapaMap({
-  apiUrl = localStorage.getItem('semapa_api_url') || 'http://localhost:8000',
-  apiConnected = false
-}) {
+export default function SemapaMap() {
   const [viewMode, setViewMode] = useState('normal'); // 'normal' | 'heatmap'
   const [currentZoom, setCurrentZoom] = useState(12); // Track map zoom level!
   const [showInfras, setShowInfras] = useState(true); // Default to true!
   const [infras, setInfras] = useState([]);
-  const [filteredInfras, setFilteredInfras] = useState([]);
   const [loadingInfras, setLoadingInfras] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeQuery, setActiveQuery] = useState('');
   const [searchCenter, setSearchCenter] = useState(null);
   const [clickedInfo, setClickedInfo] = useState(null);
   const [mapBounds, setMapBounds] = useState(null);
 
   // Load properties dynamically in a background Web Worker (subhilo) to prevent blocking the UI
   useEffect(() => {
-    if (!showInfras) {
-      setFilteredInfras([]);
-      return;
-    }
+    if (!showInfras || infras.length > 0) return;
 
-    // Reuse if already loaded in-memory
-    if (infras.length > 0) {
-      setFilteredInfras(infras);
-      return;
-    }
-
-    setLoadingInfras(true);
+    const loadingTimeoutId = setTimeout(() => {
+      setLoadingInfras(true);
+    }, 0);
 
     // Create an inline Web Worker to parse the JSON in a separate thread
     const workerCode = `
@@ -104,7 +93,6 @@ export default function SemapaMap({
       const { success, data, error } = e.data;
       if (success) {
         setInfras(data);
-        setFilteredInfras(data);
       } else {
         console.error("Worker failed to parse JSON:", error);
       }
@@ -121,10 +109,18 @@ export default function SemapaMap({
     };
 
     return () => {
+      clearTimeout(loadingTimeoutId);
       worker.terminate();
       URL.revokeObjectURL(workerUrl);
     };
   }, [showInfras, infras.length]);
+
+  const filteredInfras = useMemo(() => {
+    if (!activeQuery) return infras;
+    return infras
+      .filter((infra) => infra.direccion && infra.direccion.toLowerCase().includes(activeQuery))
+      .slice(0, 1000);
+  }, [infras, activeQuery]);
 
   // Compute visible markers in current viewport bounds (only for zoom >= 15 to keep 60 FPS)
   const visibleInfras = useMemo(() => {
@@ -149,20 +145,20 @@ export default function SemapaMap({
 
   // Handle address searches in-memory
   const handleSearch = () => {
-    if (!searchQuery.trim()) {
-      setFilteredInfras(infras);
+    const raw = searchQuery.trim();
+    if (!raw) {
+      setActiveQuery('');
       setSearchCenter(null);
       return;
     }
 
-    const query = searchQuery.toLowerCase().trim();
-    const filtered = infras.filter(infra =>
-      infra.direccion && infra.direccion.toLowerCase().includes(query)
-    );
-    // Limit displaying markers to 1000 to keep rendering performance smooth
-    setFilteredInfras(filtered.slice(0, 1000));
-    if (filtered.length > 0) {
-      setSearchCenter([filtered[0].latitud, filtered[0].longitud]);
+    const query = raw.toLowerCase();
+    setActiveQuery(query);
+    const firstMatch = infras.find((infra) => infra.direccion && infra.direccion.toLowerCase().includes(query));
+    if (firstMatch) {
+      setSearchCenter([firstMatch.latitud, firstMatch.longitud]);
+    } else {
+      setSearchCenter(null);
     }
   };
 
@@ -274,7 +270,7 @@ export default function SemapaMap({
       <div className="map-controls" style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', padding: '0.6rem', top: '10px', right: '10px', width: '230px' }}>
 
         {/* View Mode Selector */}
-        <div style={{ display: 'flex', gap: '0.25rem', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '0.4rem' }}>
+        <div style={{ display: 'flex', gap: '0.25rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.4rem' }}>
           <button
             className={`map-btn ${viewMode === 'normal' ? 'active' : ''}`}
             onClick={() => setViewMode('normal')}
@@ -292,7 +288,7 @@ export default function SemapaMap({
         </div>
 
         {/* Property Addresses Toggle */}
-        <div style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+        <div style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
               {loadingInfras ? "Cargando..." : "Mostrar Direcciones"}
@@ -329,11 +325,11 @@ export default function SemapaMap({
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               style={{
-                background: 'rgba(255, 255, 255, 0.05)',
-                border: '1px solid rgba(255, 255, 255, 0.1)',
-                borderRadius: '4px',
-                color: '#fff',
-                padding: '0.2rem 0.4rem',
+                background: 'var(--field-bg)',
+                border: '1px solid var(--field-border)',
+                borderRadius: '8px',
+                color: 'var(--text-primary)',
+                padding: '0.35rem 0.5rem',
                 fontSize: '0.7rem',
                 width: '100%',
                 outline: 'none'
@@ -353,13 +349,13 @@ export default function SemapaMap({
       <MapContainer
         center={[-17.3935, -66.1570]}
         zoom={12}
-        style={{ height: '100%', width: '100%', background: '#0b0f19', borderRadius: '12px' }}
+        style={{ height: '100%', width: '100%', background: '#eef7ff', borderRadius: '12px' }}
       >
         <ChangeView center={searchCenter} />
         <MapEventsHandler onZoomChange={setCurrentZoom} onBoundsChange={setMapBounds} />
 
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
           attribution='&copy; OpenStreetMap contributors &copy; CARTO'
         />
 
@@ -391,7 +387,7 @@ export default function SemapaMap({
                 click: (e) => handlePolygonClick(item, e)
               }}
               pathOptions={{
-                color: viewMode === 'heatmap' ? 'rgba(255,255,255,0.15)' : item.color,
+                color: viewMode === 'heatmap' ? 'rgba(0,0,0,0.10)' : item.color,
                 fillColor: fillColor,
                 fillOpacity: viewMode === 'heatmap' ? 0.6 : 0.2,
                 weight: 1.5

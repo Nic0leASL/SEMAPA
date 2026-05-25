@@ -18,6 +18,11 @@ export const dashboardMockData = {
       { distrito: 'Distrito 8', nivel: 'Crítico', porcentaje: 85 },
       { distrito: 'Distrito 9', nivel: 'Alto', porcentaje: 72 },
       { distrito: 'Distrito 1', nivel: 'Moderado', porcentaje: 45 }
+    ],
+    weatherComparison: [
+      { fecha: '2026-02-28', consumo_total_m3: 2250187.0, temperatura_max_c: 25.5, ubicacion: 'Cochabamba, Bolivia' },
+      { fecha: '2026-03-31', consumo_total_m3: 2228679.0, temperatura_max_c: 26.8, ubicacion: 'Cochabamba, Bolivia' },
+      { fecha: '2026-04-30', consumo_total_m3: 2207534.0, temperatura_max_c: 27.2, ubicacion: 'Cochabamba, Bolivia' }
     ]
   },
   
