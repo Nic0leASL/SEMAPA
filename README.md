@@ -1,193 +1,151 @@
 # SEMAPA - Plataforma Big Data Distribuida (Cassandra + Docker + Tailscale)
 
-Este proyecto está diseñado de forma nativa para operar sobre un clúster distribuido horizontalmente de **Apache Cassandra 4.1** y **FastAPI**, implementando un esquema de **particionamiento horizontal real** con un factor de replicación de 1 ($RF=1$).
-
-Esta guía permite realizar un despliegue multi-máquina real utilizando la red virtual de **Tailscale** en menos de 10 minutos.
+Este proyecto está diseñado de forma nativa para operar sobre un clúster distribuido horizontalmente de **Apache Cassandra 4.1** y **Node.js (Express)**, implementando un esquema de **particionamiento horizontal real** con un factor de replicación de 1 ($RF=1$).
 
 ---
 
-# DESPLIEGUE DISTRIBUIDO CON TAILSCALE
+## 1. Estructura del Proyecto
 
-## 1. Arquitectura del Sistema
+El repositorio está organizado en módulos independientes para separar el frontend, la lógica del backend, el esquema de base de datos y los datos origen para la ingesta:
 
-El despliegue distribuye los componentes del sistema en dos computadoras físicas independientes interconectadas de manera segura:
+```text
+SEMAPA/
+├── Backend/
+│   ├── backend/               # Directorio principal del servidor Node.js
+│   │   ├── uploads/           # Carpeta para archivos subidos y preavisos PDF generados
+│   │   ├── Dockerfile         # Configuración del contenedor Docker para Node.js
+│   │   ├── package.json       # Dependencias (Express, cassandra-driver, pdfkit, qrcode, etc.)
+│   │   ├── server.js          # Archivo principal (Servidor Express y lógica de endpoints/ETL)
+│   │   ├── PdfService.js      # Servicio generador de preavisos PDF (Formato térmico y media carta)
+│   │   └── schema.cql         # Esquema de base de datos Cassandra (tablas denormalizadas)
+│   └── datos/                 # Carpeta con los archivos CSV oficiales para la ingesta ETL
+│       ├── Distritos.csv
+│       ├── contratos_agua.csv
+│       ├── infraestructuras_cochabamba.csv
+│       ├── medidores_iot.csv
+│       └── lecturas_iot.csv
+├── Dasboard/                  # Frontend de la plataforma (Vite + React)
+│   ├── src/                   # Componentes, vistas y lógica del mapa/gráficas
+│   ├── public/                # Recursos estáticos públicos
+│   ├── package.json           # Dependencias y scripts del frontend React
+│   ├── index.html             # Punto de entrada HTML5
+│   └── vite.config.js         # Configuración de empaquetado de Vite
+├── docker-compose.primary.yml # Orquestación para PC 1 (Cassandra Node 1 + Backend + Nginx Prod)
+├── docker-compose.secondary.yml # Orquestación para PC 2 (Cassandra Node 2)
+└── README.md                  # Documentación general del proyecto (esta guía)
+```
 
-### Distribución por Computadora
+---
+
+## 2. Cómo Correr el Proyecto
+
+Puedes operar y probar el sistema utilizando dos metodologías de ejecución según tus necesidades:
+
+### Opción A: Modo Desarrollo (Ejecución Local Rápida - Recomendado para cambios en vivo)
+
+Este modo te permite ejecutar el frontend, el backend y la base de datos de manera independiente con recarga en vivo (Hot Reloading).
+
+#### Paso 1: Levantar la Base de Datos (Docker)
+Inicia únicamente el contenedor de Cassandra en segundo plano:
+```bash
+docker compose -f docker-compose.primary.yml up -d cassandra-node1
+```
+*Nota: Espera unos 20-30 segundos a que la base de datos esté lista para recibir conexiones.*
+
+#### Paso 2: Ejecutar el Backend (Node.js)
+Abre una terminal en la carpeta del backend, instala dependencias e inicia el servidor:
+```bash
+cd ./Backend/backend
+npm install
+npm start
+```
+*El servidor backend iniciará en el puerto `8000`. Detectará automáticamente la base de datos, creará el Keyspace `semapa` e inicializará el esquema CQL si no existe.*
+
+#### Paso 3: Ejecutar el Frontend Dashboard (React + Vite)
+Abre otra terminal en la carpeta del Dashboard, instala dependencias e inicia el servidor de Vite:
+```bash
+cd ./Dasboard
+npm install
+npm run dev
+```
+*El frontend estará disponible en `http://localhost:5173`. La API Url en la interfaz del mapa/dashboard puede ser configurada dinámicamente desde la barra superior apuntando a `http://localhost:8000`.*
+
+---
+
+### Opción B: Modo Producción / Despliegue Completo en Docker (Recomendado para Demos)
+
+En este modo todo se ejecuta dentro de contenedores aislados. No necesitas iniciar terminales independientes:
+
+1. **Compilar y Levantar todo el Stack:**
+   ```bash
+   docker compose -f docker-compose.primary.yml up -d --build
+   ```
+2. **Acceder a los Servicios:**
+   * **Frontend Dashboard (Nginx):** [http://localhost:3000](http://localhost:3000)
+   * **Backend API (Node.js):** [http://localhost:8000](http://localhost:8000)
+   * **Cassandra Node 1:** Expuerto en el puerto nativo `9042`
+
+---
+
+## 3. Ingesta y Carga de Datos (ETL)
+
+Una vez que el Frontend y el Backend estén corriendo, debes cargar los datos históricos de SEMAPA para popular la base de datos distribuida:
+
+1. Abre el navegador en el Dashboard (en `http://localhost:3000` o `http://localhost:5173`).
+2. Haz clic en la sección de **"Ingesta ETL"** del menú de navegación.
+3. Carga los archivos CSV de la carpeta `/Backend/datos/` **estrictamente en el siguiente orden** debido a las relaciones de enriquecimiento de datos:
+   
+   1. **Distritos (`Distritos.csv`):** Define subalcaldías, cantidad de habitantes y demografía del clúster.
+   2. **Contratos (`contratos_agua.csv`):** Define los titulares, medidores asociados y categorías.
+   3. **Infraestructuras (`infraestructuras_cochabamba.csv`):** Define las viviendas, sus direcciones y coordenadas geográficas.
+   4. **Medidores (`medidores_iot.csv`):** Define el estado (Operativo, Mantenimiento, Dañado) de los medidores IoT.
+   5. **Lecturas (`lecturas_iot.csv`):** Procesa los 300,000 registros de consumo.
+
+### Procesamiento Interno del Motor ETL en Node.js:
+* **Deduplicación Cronológica:** Si se detectan múltiples lecturas para un mismo medidor en un mismo día, se almacena solo el primer registro y las réplicas redundantes se registran en `lecturas_duplicadas_log`.
+* **Anomalías Negativas:** Si la lectura actual es menor que la anterior, se registra la señal como una anomalía en `errores_iot` y se descarta del cálculo de facturación.
+* **Pre-agregación:** El backend genera de forma paralela resúmenes de consumo por zonas y distritos (`reporte_consumo_zona`, `reporte_consumo_distrito`) permitiendo al dashboard consultar métricas en milisegundos.
+
+---
+
+## 4. Despliegue Distribuido con Tailscale (2 Computadoras)
+
+### 1. Arquitectura del Clúster
 ```text
 PC 1 (PRINCIPAL - Mani)             PC 2 (SECUNDARIA)
 ├── Cassandra Nodo 1 (Seed)         └── Cassandra Nodo 2
-├── Backend API (FastAPI)
+├── Backend API (Node.js Express)
 └── Frontend Dashboard (Nginx)
 ```
 
-### Flujo de Datos y Conexiones
-```text
-      Frontend (Puerto 3000)
-         │
-         ▼ (Llamadas REST)
-     Backend API (Puerto 8000)
-         │
-         ▼ (Driver CQL Nativo - Puerto 9042)
-   ┌──────────────────────────────────────────────┐
-   │              CLUSTER CASSANDRA               │
-   │  (Gossip inter-nodo vía Puerto 7000)         │
-   │                                              │
-   │  ├── Nodo 1 (PC 1 Seed) : 100.71.121.5        │
-   │  └── Nodo 2 (PC 2)      : 100.114.64.8       │
-   └──────────────────────────────────────────────┘
-```
+### 2. Configuración de Red Mesh (Tailscale)
+Cassandra requiere comunicación TCP bidireccional directa en los puertos `7000` (Gossip) y `9042` (CQL Client). Al instalar Tailscale en ambas PCs, estas obtendrán IPs virtuales dedicadas (ej. `100.71.121.5` para PC 1 y `100.114.64.8` para PC 2), permitiendo la interconexión transparente sin abrir puertos en el router físico.
 
----
-
-## 2. ¿Qué es Tailscale y por qué lo usamos?
-
-**Tailscale** es una herramienta de red de confianza cero (Zero Trust) basada en el protocolo **WireGuard®**.
-- **Qué hace:** Crea una red de área local virtual segura (VPN mesh/malla) entre diferentes dispositivos físicos a través de Internet, sin necesidad de configurar firewalls complejos, routers o redirigir puertos (port forwarding).
-- **Por qué se usa aquí:** Cassandra requiere comunicación TCP bidireccional directa entre todos sus nodos (en los puertos `7000` y `9042`). Al instalar Tailscale, ambos equipos obtendrán una IP virtual dedicada (dentro del rango `100.X.X.X`), permitiendo que el contenedor de Docker de la PC 1 se conecte directamente con el contenedor de la PC 2 como si estuviesen en el mismo switch físico.
-
----
-
-## 3. Instalación y Configuración de Tailscale
-
-Ambos compañeros deben seguir estos sencillos pasos:
-
-1. **Instalar Tailscale:** Descarga e instala el cliente oficial para tu sistema operativo desde [https://tailscale.com/download](https://tailscale.com/download).
-2. **Iniciar sesión:** Inicia sesión con la misma cuenta de proveedor de identidad (Gmail, GitHub, etc.) en ambos dispositivos para que queden vinculados en la misma red privada virtual.
-3. **Verificar la conexión:** Una vez conectados, comprueba que puedes ver al otro equipo en la lista de dispositivos de Tailscale.
-4. **Obtener tu IP de Tailscale:** Abre una consola y ejecuta el siguiente comando:
-   ```bash
-   tailscale ip -4
-   ```
-   *Nota: En esta guía asumimos que la IP de la PC 1 (Mani) es `100.71.121.5` y la IP de la PC 2 es `100.114.64.8`.*
-
----
-
-## 4. Configuración de docker-compose.primary.yml (PC Principal)
-
-En la **PC Principal (Mani: 100.71.121.5)**, el archivo `docker-compose.primary.yml` levanta el Nodo 1 (que actúa como Seed del clúster), la API del Backend y la interfaz del Dashboard.
-
-```yaml
-version: '3.8'
-
-services:
-  cassandra-node1:
-    image: cassandra:4.1
-    container_name: cassandra-node1
-    ports:
-      - "9042:9042"      # Puerto CQL nativo
-      - "7000:7000"      # Puerto de comunicación/gossip inter-nodo (Crítico para Tailscale)
-      - "7199:7199"      # Puerto JMX para nodetool status/ring
-    environment:
-      - CASSANDRA_CLUSTER_NAME=SEMAPA_CLUSTER
-      - CASSANDRA_SEEDS=100.71.121.5                 # IP Tailscale de PC 1 (Seed)
-      - CASSANDRA_BROADCAST_ADDRESS=100.71.121.5     # Anuncia esta IP de Tailscale a otros nodos
-      - CASSANDRA_RPC_ADDRESS=0.0.0.0                # Escucha en todas las interfaces para conexiones de clientes
-      - CASSANDRA_BROADCAST_RPC_ADDRESS=100.71.121.5 # Anuncia esta IP para que la API se conecte
-      - CASSANDRA_ENDPOINT_SNITCH=SimpleSnitch
-      - CASSANDRA_DC=dc1
-      - CASSANDRA_RACK=rack1
-      - CASSANDRA_NUM_TOKENS=16
-    volumes:
-      - cassandra_node1_data:/var/lib/cassandra
-    healthcheck:
-      test: ["CMD-SHELL", "cqlsh -e 'describe keyspaces' || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-
-  backend-api:
-    build:
-      context: ./Backend/backend
-      dockerfile: Dockerfile
-    container_name: backend-api
-    ports:
-      - "8000:8000"
-    environment:
-      - CASSANDRA_CONTACT_POINTS=100.71.121.5
-      - CASSANDRA_PORT=9042
-      - API_PORT=8000
-      - NODE_NAME=API_Principal_Nodo1
-    depends_on:
-      cassandra-node1:
-        condition: service_healthy
-    volumes:
-      - ./Backend/backend/uploads:/app/uploads
-      - ./Backend/datos:/app/datos:ro
-
-  frontend-dashboard:
-    image: nginx:alpine
-    container_name: frontend-dashboard
-    ports:
-      - "3000:80"
-    volumes:
-      - ./Dasboard:/usr/share/nginx/html:ro
-
-volumes:
-  cassandra_node1_data:
-```
-
----
-
-## 5. Configuración de docker-compose.secondary.yml (PC Secundaria)
-
-En la **PC Secundaria (Compañero: 100.114.64.8)**, se clona el proyecto y se utiliza el archivo `docker-compose.secondary.yml` para levantar únicamente el Nodo 2 de Cassandra.
-
-```yaml
-version: '3.8'
-
-services:
-  cassandra-node2:
-    image: cassandra:4.1
-    container_name: cassandra-node2
-    ports:
-      - "9042:9042"      # Puerto CQL nativo
-      - "7000:7000"      # Puerto de comunicación/gossip inter-nodo (Crítico para Tailscale)
-      - "7199:7199"      # Puerto JMX para nodetool status/ring
-    environment:
-      - CASSANDRA_CLUSTER_NAME=SEMAPA_CLUSTER
-      - CASSANDRA_SEEDS=100.71.121.5                 # IP Tailscale de PC 1 (Seed/Principal)
-      - CASSANDRA_BROADCAST_ADDRESS=100.114.64.8     # Anuncia esta IP de Tailscale (PC Secundaria)
-      - CASSANDRA_RPC_ADDRESS=0.0.0.0                # Escucha en todas las interfaces para conexiones
-      - CASSANDRA_BROADCAST_RPC_ADDRESS=100.114.64.8 # Anuncia esta IP para que los clientes se conecten
-      - CASSANDRA_ENDPOINT_SNITCH=SimpleSnitch
-      - CASSANDRA_DC=dc1
-      - CASSANDRA_RACK=rack1
-      - CASSANDRA_NUM_TOKENS=16
-    volumes:
-      - cassandra_node2_data:/var/lib/cassandra
-
-volumes:
-  cassandra_node2_data:
-```
-
----
-
-## 6. Comandos Finales Simples de Arranque
-
-### En la PC Principal (Mani)
-Levanta todos los servicios principales del cluster en segundo plano:
+Para obtener tu IP ejecuta en consola:
 ```bash
-docker compose -f docker-compose.primary.yml up -d
+tailscale ip -4
 ```
 
-### En la PC Secundaria (Compañero)
-Levanta el segundo nodo de Cassandra conectándose automáticamente al principal a través de Tailscale:
-```bash
-docker compose -f docker-compose.secondary.yml up -d
-```
+### 3. Configuración en la PC Principal (PC 1: `100.71.121.5`)
+El archivo `docker-compose.primary.yml` levanta el nodo Seed, el backend y el dashboard:
+* **CASSANDRA_SEEDS:** `100.71.121.5`
+* **CASSANDRA_BROADCAST_ADDRESS:** `100.71.121.5`
+
+### 4. Configuración en la PC Secundaria (PC 2: `100.114.64.8`)
+El archivo `docker-compose.secondary.yml` levanta únicamente el nodo 2 de Cassandra:
+* **CASSANDRA_SEEDS:** `100.71.121.5` (Apunta a PC 1)
+* **CASSANDRA_BROADCAST_ADDRESS:** `100.114.64.8` (Su propia IP de Tailscale)
 
 ---
 
-## 7. Verificación del Estado del Clúster
+## 5. Verificación del Anillo Distribuido
 
-Para validar que ambos nodos se hayan descubierto mutuamente y formado el anillo distribuido, ejecuta en la terminal de la **PC Principal**:
-
+Para comprobar que ambos nodos se hayan descubierto exitosamente y formado el anillo lógico, ejecuta en la PC Principal:
 ```bash
 docker exec -it cassandra-node1 nodetool status
 ```
 
-Debe mostrar una salida con **ambos nodos en estado Up Normal (`UN`)**:
-
+Debe mostrar a ambos nodos en estado **Up Normal (`UN`)**:
 ```text
 Status=Up/Down
 |/ State=Normal/Leaving/Joining/Moving
@@ -198,63 +156,18 @@ UN  100.114.64.8  324.95 KiB 16      50.0%             fa2c8db2-2321-482a-a921-7
 
 ---
 
-## 8. Verificación de la Distribución Horizontal
+## 6. Defensa Académica: Simulación de Caída de un Nodo (Sharding Real)
 
-Para comprobar cómo se particionan los datos en el anillo de Cassandra, ejecuta:
+Para demostrar en vivo que la base de datos está realmente fragmentada horizontalmente sin replicación redundante ($RF=1$):
 
-```bash
-docker exec -it cassandra-node1 nodetool ring
-```
-
-### Explicación del Anillo (Ring):
-1. **Rango de Tokens:** Cassandra divide el anillo completo (de $-2^{63}$ a $2^{63}-1$) entre los nodos activos utilizando el particionador **Murmur3Partitioner**.
-2. **Tokens Asignados:** Cada nodo posee una fracción del rango de tokens (en este caso, 50.0% efectivos cada uno con 16 vnodes).
-3. **Distribución Real:** Si una fila es insertada, Cassandra aplica hash a su clave de partición. El resultado determinará de forma matemática e inequívoca si la fila se almacena físicamente en el Nodo 1 o en el Nodo 2.
-
----
-
-## 9. Simulación de Caída de un Nodo (Sharding Real)
-
-Para demostrar en vivo frente a un tribunal académico que la base de datos está realmente particionada horizontalmente y que **no existe duplicación redundante** ($RF=1$):
-
-1. **Detener el Nodo 2:** En la **PC Secundaria**, apaga el contenedor de Cassandra:
+1. **Apagar Cassandra en PC 2:**
    ```bash
    docker stop cassandra-node2
    ```
-2. **Verificar Estado del Clúster:** En la **PC Principal**, ejecuta `docker exec -it cassandra-node1 nodetool status`. Verás al Nodo 2 en estado **`DN`** (Down Normal):
-   ```text
-   UN  100.71.121.5  354.21 KiB 16      100.0%            8b5d3c8d-3921-4b1c-99d9-11c67e72ff08  rack1
-   DN  100.114.64.8  0.00 KiB   16      0.0%              fa2c8db2-2321-482a-a921-77ee8ca41cc2  rack1
-   ```
-3. **Efecto en el Sistema (Pérdida Parcial de Datos):**
-   - Abre el **Frontend Dashboard** en la PC Principal (`http://localhost:3000`). Verás una alerta indicando que el clúster está operando con degradación.
-   - Las consultas a datos almacenados en el **Nodo 1** (cuyos hashes caigan en sus rangos de token) se resolverán con éxito instantáneo.
-   - Las consultas a datos cuyo propietario exclusivo era el **Nodo 2** fallarán arrojando un error de tipo `Timeout / NoHostAvailable`.
-   *Esto demuestra empíricamente que cada nodo físico posee únicamente su propia sección de datos.*
-4. **Restaurar el Servicio:** Vuelve a encender el contenedor en la **PC Secundaria**:
-   ```bash
-   docker start cassandra-node2
-   ```
-   En unos segundos, el clúster volverá a su estado normal `UN` integrado en ambas máquinas.
-
----
-
-## 10. IMPORTANTE: Conclusiones para la Defensa Académica
-
-Durante la defensa del proyecto, recalca las siguientes decisiones de diseño:
-- **No es Replicación Completa:** Con $RF=1$, no hay redundancia. Esto contrasta con sistemas de Alta Disponibilidad convencional ($RF=3$ o similar), donde todos los nodos tienen copias de todo.
-- **Particionamiento Automático:** Cassandra gestiona de forma autónoma a qué nodo va cada registro. La API se conecta al cluster y envía consultas de manera agnóstica; el protocolo localiza la partición de forma transparente al programador.
-- **Escalabilidad Horizontal Pura:** Para agregar almacenamiento, basta con adherir una PC 3 al anillo de Tailscale y configurar su docker-compose. Cassandra redistribuirá los rangos de tokens de forma balanceada e inmediata.
-
----
-
-## 11. Guía Rápida de Preparación (Demo de 10 Minutos)
-
-1. Conecta ambas PCs a **Tailscale** y copia sus IPs correspondientes.
-2. Clona el repositorio en ambas máquinas.
-3. Asegúrate de configurar los docker-compose con las IPs reales (como se ilustra en los puntos 4 y 5).
-4. Levanta el compose principal en PC 1, espera a que el healthcheck de Cassandra esté en verde.
-5. Levanta el compose secundario en PC 2.
-6. Abre el **Dashboard** (`http://localhost:3000`) en la PC Principal.
-7. Ve a la pestaña **"Ingesta ETL"**. Carga secuencialmente los archivos CSV de la carpeta `/Backend/datos` para pre-poblar el clúster con los 300,000 registros en vivo.
-8. Realiza consultas en vivo y finaliza demostrando la caída parcial del clúster con `docker stop cassandra-node2`.
+2. **Verificar Estado del Clúster en PC 1:**
+   `docker exec -it cassandra-node1 nodetool status` mostrará al Nodo 2 como **`DN`** (Down Normal).
+3. **Efecto de Sharding (Pérdida Parcial de Datos):**
+   * Al consultar un medidor o contrato almacenado en el **Nodo 1**, el dashboard cargará la información inmediatamente.
+   * Al consultar datos cuyo hash pertenezca al rango de tokens del **Nodo 2** (apagado), el backend arrojará un error de `Timeout / NoHostAvailable`.
+   * *Esto demuestra de manera fehaciente al tribunal que los datos se dividen y no están duplicados redundantemente.*
+4. **Restaurar:** Vuelve a encender el contenedor en la PC Secundaria con `docker start cassandra-node2` para reintegrar el clúster.

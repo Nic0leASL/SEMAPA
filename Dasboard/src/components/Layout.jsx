@@ -92,8 +92,49 @@ export default function Layout() {
             </nav>
           </div>
 
+          <div className="topbar-actions">
+            <div className="connection-pill">
+              <div className={`status-dot ${apiConnected ? 'status-online' : 'status-error'}`} />
+              <span className="connection-pill-text">
+                {apiConnected ? 'Conectado' : 'Desconectado'}
+              </span>
+            </div>
+            <button 
+              className="settings-toggle-btn"
+              onClick={() => setShowSettings(!showSettings)}
+              aria-label="Configurar URL del API"
+            >
+              <Settings size={18} />
+            </button>
+          </div>
         </div>
       </header>
+
+      {showSettings && (
+        <div className="settings-bar glass animate-fade-in" style={{ margin: '0.75rem 1.25rem 0', borderRadius: '14px', zIndex: 190 }}>
+          <div className="settings-input-group">
+            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+              URL API:
+            </span>
+            <input
+              type="text"
+              className="settings-input"
+              value={inputUrl}
+              onChange={(e) => setInputUrl(e.target.value)}
+              placeholder="http://localhost:8000"
+              style={{ fontSize: '0.8rem', padding: '0.35rem 0.6rem' }}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', marginLeft: '1rem' }}>
+            <button className="settings-btn" onClick={handleSave} style={{ padding: '0.35rem 0.8rem', fontSize: '0.75rem' }}>
+              Guardar
+            </button>
+            <button className="settings-btn-secondary" onClick={() => setShowSettings(false)} style={{ padding: '0.35rem 0.8rem', fontSize: '0.75rem' }}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="app-body">
         

@@ -41,26 +41,26 @@ function MapEventsHandler({ onZoomChange, onBoundsChange }) {
 
 // Known avenue corridors in Cochabamba with REAL coordinates for validation
 const AVENUE_CORRIDORS = {
-  'av. america': { latRange: [-17.395, -17.385], lngRange: [-66.165, -66.150] },
-  'av. américa': { latRange: [-17.395, -17.385], lngRange: [-66.165, -66.150] },
-  'av. beijing': { latRange: [-17.380, -17.370], lngRange: [-66.165, -66.145] },
-  'av. blanco galindo': { latRange: [-17.400, -17.390], lngRange: [-66.190, -66.150] },
-  'av. melchor perez': { latRange: [-17.395, -17.385], lngRange: [-66.165, -66.140] },
-  'av. melchor pérez': { latRange: [-17.395, -17.385], lngRange: [-66.165, -66.140] },
-  'av. circunvalacion': { latRange: [-17.410, -17.395], lngRange: [-66.175, -66.150] },
-  'av. circunvalación': { latRange: [-17.410, -17.395], lngRange: [-66.175, -66.150] },
-  'av. villazon': { latRange: [-17.400, -17.385], lngRange: [-66.160, -66.145] },
-  'av. villazón': { latRange: [-17.400, -17.385], lngRange: [-66.160, -66.145] },
-  'av. heroinas': { latRange: [-17.395, -17.390], lngRange: [-66.170, -66.145] },
-  'av. heroínas': { latRange: [-17.395, -17.390], lngRange: [-66.170, -66.145] },
-  'av. ayacucho': { latRange: [-17.400, -17.380], lngRange: [-66.160, -66.155] },
-  'av. oquendo': { latRange: [-17.400, -17.385], lngRange: [-66.170, -66.155] },
-  'av. aroma': { latRange: [-17.398, -17.392], lngRange: [-66.170, -66.150] },
-  'av. simon lopez': { latRange: [-17.385, -17.375], lngRange: [-66.170, -66.145] },
-  'av. pando': { latRange: [-17.395, -17.385], lngRange: [-66.165, -66.150] },
-  'av. papa paulo': { latRange: [-17.375, -17.365], lngRange: [-66.170, -66.155] },
-  'av. petrolera': { latRange: [-17.400, -17.390], lngRange: [-66.180, -66.165] },
-  'av. panamericana': { latRange: [-17.415, -17.395], lngRange: [-66.180, -66.160] }
+  'av. america': { latRange: [-17.382, -17.372], lngRange: [-66.185, -66.130] },
+  'av. américa': { latRange: [-17.382, -17.372], lngRange: [-66.185, -66.130] },
+  'av. beijing': { latRange: [-17.425, -17.360], lngRange: [-66.185, -66.175] },
+  'av. blanco galindo': { latRange: [-17.402, -17.390], lngRange: [-66.220, -66.165] },
+  'av. melchor perez': { latRange: [-17.410, -17.360], lngRange: [-66.180, -66.170] },
+  'av. melchor pérez': { latRange: [-17.410, -17.360], lngRange: [-66.180, -66.170] },
+  'av. circunvalacion': { latRange: [-17.370, -17.355], lngRange: [-66.190, -66.130] },
+  'av. circunvalación': { latRange: [-17.370, -17.355], lngRange: [-66.190, -66.130] },
+  'av. villazon': { latRange: [-17.390, -17.360], lngRange: [-66.150, -66.100] },
+  'av. villazón': { latRange: [-17.390, -17.360], lngRange: [-66.150, -66.100] },
+  'av. heroinas': { latRange: [-17.396, -17.388], lngRange: [-66.180, -66.145] },
+  'av. heroínas': { latRange: [-17.396, -17.388], lngRange: [-66.180, -66.145] },
+  'av. ayacucho': { latRange: [-17.405, -17.375], lngRange: [-66.162, -66.152] },
+  'av. oquendo': { latRange: [-17.410, -17.375], lngRange: [-66.154, -66.146] },
+  'av. aroma': { latRange: [-17.400, -17.392], lngRange: [-66.165, -66.145] },
+  'av. simon lopez': { latRange: [-17.385, -17.370], lngRange: [-66.185, -66.160] },
+  'av. pando': { latRange: [-17.382, -17.370], lngRange: [-66.156, -66.150] },
+  'av. papa paulo': { latRange: [-17.388, -17.382], lngRange: [-66.152, -66.140] },
+  'av. petrolera': { latRange: [-17.460, -17.405], lngRange: [-66.145, -66.110] },
+  'av. panamericana': { latRange: [-17.440, -17.405], lngRange: [-66.160, -66.152] }
 };
 
 // District center coordinates (real ones for Cochabamba)
@@ -84,8 +84,30 @@ const DISTRICT_CENTERS = {
 
 // Validate and correct coordinates based on avenue name and district
 function validateCoordinates(infra) {
-  const { latitud, longitud, direccion, distrito } = infra;
+  let { latitud, longitud, direccion, distrito } = infra;
   
+  // Repair double UTF-8 encoding in direccion if present
+  if (direccion) {
+    try {
+      // Decode double encoded UTF-8 strings
+      direccion = decodeURIComponent(escape(direccion));
+    } catch (e) {
+      // Fallback manual replacement for common double-encoded chars
+      direccion = direccion
+        .replace(/Ã©/g, 'é')
+        .replace(/Ã³/g, 'ó')
+        .replace(/Ã¡/g, 'á')
+        .replace(/Ã­/g, 'í')
+        .replace(/Ãº/g, 'ú')
+        .replace(/Ã±/g, 'ñ')
+        .replace(/Ã‘/g, 'Ñ')
+        .replace(/Â°/g, '°')
+        .replace(/Ã¼/g, 'ü');
+    }
+  }
+
+  const randomShow = Math.random() < 0.5;
+
   // Basic bounds check for Cochabamba city
   const CBBA_BOUNDS = {
     latMin: -17.47, latMax: -17.33,
@@ -98,9 +120,11 @@ function validateCoordinates(infra) {
     const center = DISTRICT_CENTERS[distrito] || DISTRICT_CENTERS[1];
     return {
       ...infra,
+      direccion,
       latitud: center.lat + (Math.random() - 0.5) * 0.008,
       longitud: center.lng + (Math.random() - 0.5) * 0.008,
-      corrected: true
+      corrected: true,
+      randomShow
     };
   }
   
@@ -124,16 +148,22 @@ function validateCoordinates(infra) {
           
           return {
             ...infra,
+            direccion,
             latitud: newLat + (Math.random() - 0.5) * 0.003,
             longitud: newLng + numOffset + (Math.random() - 0.5) * 0.003,
-            corrected: true
+            corrected: true,
+            randomShow
           };
         }
       }
     }
   }
   
-  return infra;
+  return {
+    ...infra,
+    direccion,
+    randomShow
+  };
 }
 
 // Generate simulated client data for a property popup
@@ -357,7 +387,9 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
   }, [onSearchTrigger, apiConnected, apiUrl, externalSearchQuery, infras]);
 
   const filteredInfras = useMemo(() => {
-    if (!activeQuery && backendSearchCatastros.size === 0) return infras;
+    if (!activeQuery && backendSearchCatastros.size === 0) {
+      return infras.filter(infra => infra.randomShow);
+    }
     return infras
       .filter((infra) => {
          const matchesAddress = activeQuery && infra.direccion && infra.direccion.toLowerCase().includes(activeQuery);

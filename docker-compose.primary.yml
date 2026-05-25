@@ -34,7 +34,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - CASSANDRA_CONTACT_POINTS=100.71.121.5
+      - CASSANDRA_CONTACT_POINTS=cassandra-node1,100.71.121.5
       - CASSANDRA_PORT=9042
       - API_PORT=8000
       - NODE_NAME=API_Principal_Nodo1
