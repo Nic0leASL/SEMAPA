@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { Activity, AlertTriangle, Search, Zap } from 'lucide-react';
+import { Activity, AlertTriangle, Search, Zap, Gauge } from 'lucide-react';
 import SemapaMap from '../components/SemapaMap';
 import { dashboardMockData } from '../mockData';
 
@@ -26,7 +26,8 @@ export default function GerenciaDashboard() {
             lecturasHoy: ((stats.activos || 0) * 4).toLocaleString(), // 4 readings per day average
             alertasAnomalias: stats.total_anomalias_lectura || 0,
             erroresTop: dashboardMockData.gerencia.erroresTop,
-            zonasConFallas: apiData.zonas_con_fallas || []
+            zonasConFallas: apiData.zonas_con_fallas || [],
+            topMedidoresFallas: apiData.top_medidores_fallas || dashboardMockData.gerencia.topMedidoresFallas
           });
           setRecentErrors(apiData.errores_iot_recientes || []);
           setIsMocked(false);
@@ -49,6 +50,10 @@ export default function GerenciaDashboard() {
   const effectiveIsMocked = !apiConnected || isMocked;
   const effectiveData = !apiConnected ? dashboardMockData.gerencia : data;
   const effectiveRecentErrors = apiConnected ? recentErrors : [];
+
+  // For the medidores fallas bar chart
+  const topMedidores = effectiveData.topMedidoresFallas || dashboardMockData.gerencia.topMedidoresFallas;
+  const maxErrores = Math.max(...topMedidores.map(m => m.errores), 1);
 
   return (
     <div className="dashboard-view animate-fade-in" style={{ animation: 'slideDown 0.4s ease-out' }}>
@@ -103,87 +108,126 @@ export default function GerenciaDashboard() {
           <SemapaMap />
         </div>
 
-        <div className="data-card glass">
-          {effectiveIsMocked ? (
-            <>
-              <h3>Top Errores de Infraestructura IoT</h3>
-              <table style={{ marginTop: '0.5rem' }}>
-                <thead>
-                  <tr>
-                    <th>Tipo de Error</th>
-                    <th>Eventos</th>
-                    <th>Estado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {effectiveData.erroresTop.map((err) => (
-                    <tr key={err.id}>
-                      <td style={{ fontWeight: '500' }}>{err.tipo}</td>
-                      <td>{err.cantidad}</td>
-                      <td>
-                        <span className={`badge ${err.estado === 'Crítico' ? 'badge-critical' : err.estado === 'Pendiente' ? 'badge-warning' : 'badge-success'}`}>
-                          {err.estado}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-              <div>
-                <h3 style={{ fontSize: '1.05rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>Zonas con Más Fallas</h3>
-                <table style={{ marginTop: '0.5rem' }}>
-                  <thead>
-                    <tr>
-                      <th>Zona</th>
-                      <th>Errores</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {effectiveData.zonasConFallas.slice(0, 3).map((z, idx) => (
-                      <tr key={idx}>
-                        <td style={{ fontWeight: '500' }}>{z.zona}</td>
-                        <td style={{ color: 'var(--accent-red)', fontWeight: '600' }}>{z.cantidad_errores}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* Top Medidores que más fallan */}
+          <div className="data-card glass">
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Gauge size={18} style={{ color: 'var(--accent-red)' }} />
+              Medidores que Más Fallan
+            </h3>
+            <div className="medidores-fallas-list">
+              {topMedidores.slice(0, 6).map((med, idx) => (
+                <div key={idx} className="medidor-falla-row">
+                  <div className="medidor-falla-info">
+                    <span className="medidor-falla-id">{med.medidor}</span>
+                    <span className="medidor-falla-zona">{med.zona}</span>
+                  </div>
+                  <div className="medidor-falla-bar-track">
+                    <div 
+                      className="medidor-falla-bar" 
+                      style={{ 
+                        width: `${(med.errores / maxErrores) * 100}%`,
+                        background: med.estado === 'Crítico' ? 'var(--accent-red)' : 
+                                   med.estado === 'Investigación' ? 'var(--accent-amber)' : 'var(--accent-purple)',
+                        animationDelay: `${idx * 0.1}s`
+                      }} 
+                    />
+                  </div>
+                  <div className="medidor-falla-meta">
+                    <span className="medidor-falla-count">{med.errores}</span>
+                    <span className={`badge ${med.estado === 'Crítico' ? 'badge-critical' : med.estado === 'Pendiente' ? 'badge-warning' : 'badge-success'}`}
+                      style={{ fontSize: '0.6rem', padding: '0.1rem 0.4rem' }}
+                    >
+                      {med.estado}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
 
-              <div>
-                <h3 style={{ fontSize: '1.05rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>Últimas Alertas IoT</h3>
+          {/* Existing: Errors Table or Zonas */}
+          <div className="data-card glass">
+            {effectiveIsMocked ? (
+              <>
+                <h3>Top Errores de Infraestructura IoT</h3>
                 <table style={{ marginTop: '0.5rem' }}>
                   <thead>
                     <tr>
-                      <th>Medidor</th>
-                      <th>Código</th>
-                      <th>Descripción</th>
+                      <th>Tipo de Error</th>
+                      <th>Eventos</th>
+                      <th>Estado</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {effectiveRecentErrors.slice(0, 3).map((err, idx) => (
-                      <tr key={idx}>
-                        <td style={{ fontFamily: 'monospace', color: 'var(--accent-cyan)' }}>{err.medidor_iot}</td>
+                    {effectiveData.erroresTop.map((err) => (
+                      <tr key={err.id}>
+                        <td style={{ fontWeight: '500' }}>{err.tipo}</td>
+                        <td>{err.cantidad}</td>
                         <td>
-                          <span className="badge badge-critical" style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem' }}>
-                            {err.codigo_error}
+                          <span className={`badge ${err.estado === 'Crítico' ? 'badge-critical' : err.estado === 'Pendiente' ? 'badge-warning' : 'badge-success'}`}>
+                            {err.estado}
                           </span>
                         </td>
-                        <td style={{ fontSize: '0.75rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={err.descripcion}>
-                          {err.descripcion}
-                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+              </>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>Zonas con Más Fallas</h3>
+                  <table style={{ marginTop: '0.5rem' }}>
+                    <thead>
+                      <tr>
+                        <th>Zona</th>
+                        <th>Errores</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(effectiveData.zonasConFallas || []).slice(0, 3).map((z, idx) => (
+                        <tr key={idx}>
+                          <td style={{ fontWeight: '500' }}>{z.zona}</td>
+                          <td style={{ color: 'var(--accent-red)', fontWeight: '600' }}>{z.cantidad_errores}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>Últimas Alertas IoT</h3>
+                  <table style={{ marginTop: '0.5rem' }}>
+                    <thead>
+                      <tr>
+                        <th>Medidor</th>
+                        <th>Código</th>
+                        <th>Descripción</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {effectiveRecentErrors.slice(0, 3).map((err, idx) => (
+                        <tr key={idx}>
+                          <td style={{ fontFamily: 'monospace', color: 'var(--accent-cyan)' }}>{err.medidor_iot}</td>
+                          <td>
+                            <span className="badge badge-critical" style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem' }}>
+                              {err.codigo_error}
+                            </span>
+                          </td>
+                          <td style={{ fontSize: '0.75rem', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={err.descripcion}>
+                            {err.descripcion}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
 }
-

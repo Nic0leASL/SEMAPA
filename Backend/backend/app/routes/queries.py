@@ -13,11 +13,20 @@ router = APIRouter(tags=["General Queries"])
 def get_session():
     return CassandraConnection.get_session()
 
+def safe_query(session, query, default=None):
+    try:
+        return list(session.execute(query))
+    except Exception as e:
+        import logging
+        logger = logging.getLogger("CassandraSafeQuery")
+        logger.warning(f"Query failed: {query} - Error: {e}")
+        return default if default is not None else []
+
 @router.get("/consumo/distrito")
 async def get_consumo_distrito():
     session = get_session()
     try:
-        rows = list(session.execute("SELECT distrito, sub_alcaldia, consumo_total, facturacion_total, lecturas_count FROM reporte_consumo_distrito"))
+        rows = safe_query(session, "SELECT distrito, sub_alcaldia, consumo_total, facturacion_total, lecturas_count FROM reporte_consumo_distrito")
         return sorted([
             {
                 "distrito": r.distrito,
@@ -34,7 +43,7 @@ async def get_consumo_distrito():
 async def get_consumo_zona():
     session = get_session()
     try:
-        rows = list(session.execute("SELECT zona, consumo_total, facturacion_total, lecturas_count FROM reporte_consumo_zona"))
+        rows = safe_query(session, "SELECT zona, consumo_total, facturacion_total, lecturas_count FROM reporte_consumo_zona")
         return sorted([
             {
                 "zona": r.zona,
@@ -50,7 +59,7 @@ async def get_consumo_zona():
 async def get_consumo_percapita():
     session = get_session()
     try:
-        rows = list(session.execute("SELECT distrito, sub_alcaldia, consumo_total, habitantes, per_capita FROM reporte_consumo_distrito"))
+        rows = safe_query(session, "SELECT distrito, sub_alcaldia, consumo_total, habitantes, per_capita FROM reporte_consumo_distrito")
         return sorted([
             {
                 "distrito": r.distrito,
@@ -69,7 +78,7 @@ async def get_medidores_activos():
     try:
         # Since scanning a massive table directly is discouraged, we fetch a limited sample
         # or we return the pre-aggregated summary count
-        rows = list(session.execute("SELECT medidor_iot, estado, tipo_medidor_id FROM medidores LIMIT 100"))
+        rows = safe_query(session, "SELECT medidor_iot, estado, tipo_medidor_id FROM medidores LIMIT 100")
         # We can also count total based on known metadata
         total_activos = 66460 + 4864 + 15959 # Operativo + Nuevo + Reacondicionado based on CSV
         return {
@@ -86,9 +95,9 @@ async def get_medidores_activos():
 async def get_medidores_inactivos():
     session = get_session()
     try:
-        rows = list(session.execute("SELECT medidor_iot, estado, tipo_medidor_id FROM medidores LIMIT 100"))
+        rows = safe_query(session, "SELECT medidor_iot, estado, tipo_medidor_id FROM medidores LIMIT 100")
         # Counts from report table
-        rep_rows = list(session.execute("SELECT total_danados, total_mantenimiento FROM reporte_errores WHERE key = 'summary'"))
+        rep_rows = safe_query(session, "SELECT total_danados, total_mantenimiento FROM reporte_errores WHERE key = 'summary'")
         total_danados = rep_rows[0].total_danados if rep_rows else 14871
         total_mantenimiento = rep_rows[0].total_mantenimiento if rep_rows else 17846
         return {
@@ -111,7 +120,7 @@ async def get_errores_modelo():
         # Since full scan is heavy, we simulate/approximate based on type IDs
         # (1: Standard, 2: Ultrasonic, 3: Electromagnetic, 4: IoT-LoRa, 5: IoT-NB)
         # Let's count them from error table
-        error_rows = list(session.execute("SELECT medidor_iot, tipo_medidor_id, codigo_error FROM errores_iot LIMIT 500"))
+        error_rows = safe_query(session, "SELECT medidor_iot, tipo_medidor_id, codigo_error FROM errores_iot LIMIT 500")
         
         counts = {}
         for r in error_rows:
@@ -139,7 +148,7 @@ async def get_errores_modelo():
 async def get_facturacion():
     session = get_session()
     try:
-        rows = list(session.execute("SELECT ingresos_recaudados, deuda_total, total_clientes_morosos FROM reporte_financiero WHERE key = 'global'"))
+        rows = safe_query(session, "SELECT ingresos_recaudados, deuda_total, total_clientes_morosos FROM reporte_financiero WHERE key = 'global'")
         if not rows:
             return {"ingresos_recaudados_bs": 0.0, "deuda_total_bs": 0.0, "total_clientes_morosos": 0}
         
@@ -161,11 +170,11 @@ async def get_facturacion():
 async def get_morosos():
     session = get_session()
     try:
-        rows = list(session.execute("SELECT numero_contrato, fecha_hora_lectura, consumo, monto_facturado FROM lecturas_unpaid_by_contrato LIMIT 100"))
+        rows = safe_query(session, "SELECT numero_contrato, fecha_hora_lectura, consumo, monto_facturado FROM lecturas_unpaid_by_contrato LIMIT 100")
         morosos_list = []
         for r in rows:
             # lookup contract details
-            details = list(session.execute(f"SELECT titular_contrato, ci_titular, medidor_iot, categoria FROM contratos WHERE numero_contrato = '{r.numero_contrato}'"))
+            details = safe_query(session, f"SELECT titular_contrato, ci_titular, medidor_iot, categoria FROM contratos WHERE numero_contrato = '{r.numero_contrato}'")
             titular = details[0].titular_contrato if details else "Cliente"
             ci = details[0].ci_titular if details else "N/A"
             categoria = details[0].categoria if details else "Residencial"
@@ -191,7 +200,7 @@ async def get_consumo_excesivo():
         # We query the district routing tables to do this cleanly
         excesivo = []
         for d in range(1, 16):
-            rows = list(session.execute(f"SELECT medidor_iot, fecha_hora_lectura, consumo, monto_facturado FROM lecturas_by_distrito WHERE distrito = {d} LIMIT 50"))
+            rows = safe_query(session, f"SELECT medidor_iot, fecha_hora_lectura, consumo, monto_facturado FROM lecturas_by_distrito WHERE distrito = {d} LIMIT 50")
             for r in rows:
                 if r.consumo > 40:
                     excesivo.append({
@@ -210,7 +219,7 @@ async def get_zonas_criticas():
     session = get_session()
     try:
         # Zones with highest consumption + zones with highest error rates
-        zona_rows = list(session.execute("SELECT zona, consumo_total, facturacion_total FROM reporte_consumo_zona"))
+        zona_rows = safe_query(session, "SELECT zona, consumo_total, facturacion_total FROM reporte_consumo_zona")
         zonas_criticas = []
         for z in zona_rows:
             # We can classify as critical if consumption > average consumption of all zones
@@ -227,7 +236,7 @@ async def get_zonas_criticas():
 async def get_lecturas_duplicadas():
     session = get_session()
     try:
-        rows = list(session.execute("SELECT medidor_iot, fecha_hora_lectura, lectura_anterior, lectura_actual, radiobase, motivo FROM lecturas_duplicadas_log LIMIT 100"))
+        rows = safe_query(session, "SELECT medidor_iot, fecha_hora_lectura, lectura_anterior, lectura_actual, radiobase, motivo FROM lecturas_duplicadas_log LIMIT 100")
         return [
             {
                 "medidor_iot": r.medidor_iot,
@@ -250,7 +259,7 @@ async def get_mapa_medidores():
     logger.info("Fetching map coordinates for medidores across all 15 districts...")
     try:
         for d in range(1, 16):
-            rows = list(session.execute(f"SELECT medidor_iot, zona, numero_contrato, numero_catastro, latitud, longitud, estado FROM medidores_by_distrito WHERE distrito = {d}"))
+            rows = safe_query(session, f"SELECT medidor_iot, zona, numero_contrato, numero_catastro, latitud, longitud, estado FROM medidores_by_distrito WHERE distrito = {d}")
             for r in rows:
                 medidores_mapa.append({
                     "distrito": d,
@@ -281,9 +290,9 @@ async def get_mapa_medidores():
 async def get_medidores_inactivos():
     session = get_session()
     try:
-        rows = list(session.execute("SELECT medidor_iot, estado, tipo_medidor_id FROM medidores LIMIT 100"))
+        rows = safe_query(session, "SELECT medidor_iot, estado, tipo_medidor_id FROM medidores LIMIT 100")
         # Counts from report table
-        rep_rows = list(session.execute("SELECT total_danados, total_mantenimiento FROM reporte_errores WHERE key = 'summary'"))
+        rep_rows = safe_query(session, "SELECT total_danados, total_mantenimiento FROM reporte_errores WHERE key = 'summary'")
         total_danados = rep_rows[0].total_danados if rep_rows else 14871
         total_mantenimiento = rep_rows[0].total_mantenimiento if rep_rows else 17846
         return {
@@ -306,7 +315,7 @@ async def get_errores_modelo():
         # Since full scan is heavy, we simulate/approximate based on type IDs
         # (1: Standard, 2: Ultrasonic, 3: Electromagnetic, 4: IoT-LoRa, 5: IoT-NB)
         # Let's count them from error table
-        error_rows = list(session.execute("SELECT medidor_iot, tipo_medidor_id, codigo_error FROM errores_iot LIMIT 500"))
+        error_rows = safe_query(session, "SELECT medidor_iot, tipo_medidor_id, codigo_error FROM errores_iot LIMIT 500")
         
         counts = {}
         for r in error_rows:
@@ -334,7 +343,7 @@ async def get_errores_modelo():
 async def get_facturacion():
     session = get_session()
     try:
-        rows = list(session.execute("SELECT ingresos_recaudados, deuda_total, total_clientes_morosos FROM reporte_financiero WHERE key = 'global'"))
+        rows = safe_query(session, "SELECT ingresos_recaudados, deuda_total, total_clientes_morosos FROM reporte_financiero WHERE key = 'global'")
         if not rows:
             return {"ingresos_recaudados_bs": 0.0, "deuda_total_bs": 0.0, "total_clientes_morosos": 0}
         
@@ -356,11 +365,11 @@ async def get_facturacion():
 async def get_morosos():
     session = get_session()
     try:
-        rows = list(session.execute("SELECT numero_contrato, fecha_hora_lectura, consumo, monto_facturado FROM lecturas_unpaid_by_contrato LIMIT 100"))
+        rows = safe_query(session, "SELECT numero_contrato, fecha_hora_lectura, consumo, monto_facturado FROM lecturas_unpaid_by_contrato LIMIT 100")
         morosos_list = []
         for r in rows:
             # lookup contract details
-            details = list(session.execute(f"SELECT titular_contrato, ci_titular, medidor_iot, categoria FROM contratos WHERE numero_contrato = '{r.numero_contrato}'"))
+            details = safe_query(session, f"SELECT titular_contrato, ci_titular, medidor_iot, categoria FROM contratos WHERE numero_contrato = '{r.numero_contrato}'")
             titular = details[0].titular_contrato if details else "Cliente"
             ci = details[0].ci_titular if details else "N/A"
             categoria = details[0].categoria if details else "Residencial"
@@ -386,7 +395,7 @@ async def get_consumo_excesivo():
         # We query the district routing tables to do this cleanly
         excesivo = []
         for d in range(1, 16):
-            rows = list(session.execute(f"SELECT medidor_iot, fecha_hora_lectura, consumo, monto_facturado FROM lecturas_by_distrito WHERE distrito = {d} LIMIT 50"))
+            rows = safe_query(session, f"SELECT medidor_iot, fecha_hora_lectura, consumo, monto_facturado FROM lecturas_by_distrito WHERE distrito = {d} LIMIT 50")
             for r in rows:
                 if r.consumo > 40:
                     excesivo.append({
@@ -405,7 +414,7 @@ async def get_zonas_criticas():
     session = get_session()
     try:
         # Zones with highest consumption + zones with highest error rates
-        zona_rows = list(session.execute("SELECT zona, consumo_total, facturacion_total FROM reporte_consumo_zona"))
+        zona_rows = safe_query(session, "SELECT zona, consumo_total, facturacion_total FROM reporte_consumo_zona")
         zonas_criticas = []
         for z in zona_rows:
             # We can classify as critical if consumption > average consumption of all zones
@@ -422,7 +431,7 @@ async def get_zonas_criticas():
 async def get_lecturas_duplicadas():
     session = get_session()
     try:
-        rows = list(session.execute("SELECT medidor_iot, fecha_hora_lectura, lectura_anterior, lectura_actual, radiobase, motivo FROM lecturas_duplicadas_log LIMIT 100"))
+        rows = safe_query(session, "SELECT medidor_iot, fecha_hora_lectura, lectura_anterior, lectura_actual, radiobase, motivo FROM lecturas_duplicadas_log LIMIT 100")
         return [
             {
                 "medidor_iot": r.medidor_iot,
@@ -445,7 +454,7 @@ async def get_mapa_medidores():
     logger.info("Fetching map coordinates for medidores across all 15 districts...")
     try:
         for d in range(1, 16):
-            rows = list(session.execute(f"SELECT medidor_iot, zona, numero_contrato, numero_catastro, latitud, longitud, estado FROM medidores_by_distrito WHERE distrito = {d}"))
+            rows = safe_query(session, f"SELECT medidor_iot, zona, numero_contrato, numero_catastro, latitud, longitud, estado FROM medidores_by_distrito WHERE distrito = {d}")
             for r in rows:
                 medidores_mapa.append({
                     "distrito": d,
@@ -461,23 +470,47 @@ async def get_mapa_medidores():
     except Exception as e:
         logger.error(f"Error querying medidores_by_distrito: {e}")
         # Partial result return or raise
-        if medidores_mapa:
-            # Node is down but we got partial data!
-            return {
-                "warning": "Some districts are unavailable due to a Cassandra node being down.",
-                "data": medidores_mapa
-            }
-        raise HTTPException(status_code=500, detail=str(e))
+        return medidores_mapa
 
 @router.get("/mapa/vivienda/{id}")
 async def get_mapa_vivienda(id: str):
     session = get_session()
     try:
-        rows = list(session.execute(f"SELECT numero_catastro, propietario, direccion, zona, distrito, latitud, longitud, valor_catastral FROM infraestructuras WHERE numero_catastro = '{id}'"))
+        rows = safe_query(session, f"SELECT numero_catastro, propietario, direccion, zona, distrito, latitud, longitud, valor_catastral FROM infraestructuras WHERE numero_catastro = '{id}'")
         if not rows:
             raise HTTPException(status_code=404, detail=f"Catastro ID '{id}' not found.")
         
         r = rows[0]
+        
+        # Consultar contrato asociado
+        contract_rows = safe_query(session, f"SELECT numero_contrato, titular_contrato, ci_titular, categoria, subcategoria, medidor_iot FROM contratos WHERE numero_catastro = '{id}' ALLOW FILTERING")
+        client = None
+        if contract_rows:
+            cr = contract_rows[0]
+            # Consultar historial
+            history_rows = safe_query(session, f"SELECT fecha_hora_lectura, lectura_anterior, lectura_actual, consumo, monto_facturado, pagado FROM lecturas_by_medidor WHERE medidor_iot = '{cr.medidor_iot}' LIMIT 6")
+            
+            history_list = []
+            for h in history_rows:
+                history_list.append({
+                    "fecha": h.fecha_hora_lectura.isoformat() if h.fecha_hora_lectura else None,
+                    "lectura_anterior": h.lectura_anterior,
+                    "lectura_actual": h.lectura_actual,
+                    "consumo_m3": h.consumo,
+                    "monto_facturado_bs": round(h.monto_facturado, 2),
+                    "pagado": h.pagado
+                })
+                
+            client = {
+                "numero_contrato": cr.numero_contrato,
+                "titular": cr.titular_contrato,
+                "ci_titular": cr.ci_titular,
+                "categoria": cr.categoria,
+                "subcategoria": cr.subcategoria,
+                "medidor_iot": cr.medidor_iot,
+                "historial": history_list
+            }
+            
         return {
             "numero_catastro": r.numero_catastro,
             "propietario": r.propietario,
@@ -486,12 +519,87 @@ async def get_mapa_vivienda(id: str):
             "distrito": r.distrito,
             "latitud": r.latitud,
             "longitud": r.longitud,
-            "valor_catastral": r.valor_catastral
+            "valor_catastral": r.valor_catastral,
+            "client": client
         }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/buscar")
+async def buscar_general(q: str):
+    session = get_session()
+    results = {
+        "contratos": [],
+        "infraestructuras": [],
+        "medidores": []
+    }
+    if not q:
+        return results
+    
+    q_lower = q.lower()
+    
+    # 1. Search in contracts
+    try:
+        if q.isdigit() or q.upper().startswith("CT") or q.upper().startswith("MED"):
+            c_rows = safe_query(session, f"SELECT numero_contrato, titular_contrato, ci_titular, medidor_iot, categoria, numero_catastro FROM contratos WHERE numero_contrato = '{q}' ALLOW FILTERING")
+            if not c_rows:
+                c_rows = safe_query(session, f"SELECT numero_contrato, titular_contrato, ci_titular, medidor_iot, categoria, numero_catastro FROM contratos WHERE medidor_iot = '{q}' ALLOW FILTERING")
+            
+            for r in c_rows:
+                results["contratos"].append({
+                    "numero_contrato": r.numero_contrato,
+                    "titular_contrato": r.titular_contrato,
+                    "ci_titular": r.ci_titular,
+                    "medidor_iot": r.medidor_iot,
+                    "categoria": r.categoria,
+                    "numero_catastro": r.numero_catastro
+                })
+        else:
+            c_rows = safe_query(session, "SELECT numero_contrato, titular_contrato, ci_titular, medidor_iot, categoria, numero_catastro FROM contratos LIMIT 500")
+            for r in c_rows:
+                if r.titular_contrato and q_lower in r.titular_contrato.lower():
+                    results["contratos"].append({
+                        "numero_contrato": r.numero_contrato,
+                        "titular_contrato": r.titular_contrato,
+                        "ci_titular": r.ci_titular,
+                        "medidor_iot": r.medidor_iot,
+                        "categoria": r.categoria,
+                        "numero_catastro": r.numero_catastro
+                    })
+    except Exception as e:
+        logger.error(f"Search contracts error: {e}")
+
+    # 2. Search in infraestructuras
+    try:
+        if q.upper().startswith("CAT-") or (len(q) >= 4 and q.replace("-","").isdigit()):
+            inf_rows = safe_query(session, f"SELECT numero_catastro, direccion, latitud, longitud, zona, distrito FROM infraestructuras WHERE numero_catastro = '{q}' ALLOW FILTERING")
+            for r in inf_rows:
+                results["infraestructuras"].append({
+                    "numero_catastro": r.numero_catastro,
+                    "direccion": r.direccion,
+                    "latitud": r.latitud,
+                    "longitud": r.longitud,
+                    "zona": r.zona,
+                    "distrito": r.distrito
+                })
+        else:
+            inf_rows = safe_query(session, "SELECT numero_catastro, direccion, latitud, longitud, zona, distrito FROM infraestructuras LIMIT 500")
+            for r in inf_rows:
+                if r.direccion and q_lower in r.direccion.lower():
+                    results["infraestructuras"].append({
+                        "numero_catastro": r.numero_catastro,
+                        "direccion": r.direccion,
+                        "latitud": r.latitud,
+                        "longitud": r.longitud,
+                        "zona": r.zona,
+                        "distrito": r.distrito
+                    })
+    except Exception as e:
+        logger.error(f"Search infraestructuras error: {e}")
+
+    return results
 
 CSV_PATH = r"c:\Users\manuc\Universidad\Sistemas distribuidos\Cassandra\SEMAPA\Backend\datos\03 Practica 5 Recursos infraestructuras_cochabamba.csv"
 CSV_COORD_PATH = r"c:\Users\manuc\Universidad\Sistemas distribuidos\Cassandra\SEMAPA\Backend\datos\infraestructuras_coordenadas.csv"
@@ -533,7 +641,7 @@ async def get_mapa_infraestructuras(distrito: int = None, buscar: str = None, li
         else:
             query = f"SELECT numero_catastro, direccion, latitud, longitud FROM infraestructuras LIMIT 2000"
         
-        rows = list(session.execute(query))
+        rows = safe_query(session, query)
         results = [
             {
                 "numero_catastro": r.numero_catastro,

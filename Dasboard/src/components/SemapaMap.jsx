@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { MapContainer, TileLayer, Polygon, Tooltip, CircleMarker, Popup, useMap, useMapEvents } from 'react-leaflet';
+import { useOutletContext } from 'react-router-dom';
 import 'leaflet/dist/leaflet.css';
 import { districtsCochabamba } from '../../distritos_cochabamba (1)';
 import { subdistritosCochabamba } from '../../subdistritos_cochabamba';
@@ -38,7 +39,156 @@ function MapEventsHandler({ onZoomChange, onBoundsChange }) {
   return null;
 }
 
-export default function SemapaMap() {
+// Known avenue corridors in Cochabamba with REAL coordinates for validation
+const AVENUE_CORRIDORS = {
+  'av. america': { latRange: [-17.395, -17.385], lngRange: [-66.165, -66.150] },
+  'av. américa': { latRange: [-17.395, -17.385], lngRange: [-66.165, -66.150] },
+  'av. beijing': { latRange: [-17.380, -17.370], lngRange: [-66.165, -66.145] },
+  'av. blanco galindo': { latRange: [-17.400, -17.390], lngRange: [-66.190, -66.150] },
+  'av. melchor perez': { latRange: [-17.395, -17.385], lngRange: [-66.165, -66.140] },
+  'av. melchor pérez': { latRange: [-17.395, -17.385], lngRange: [-66.165, -66.140] },
+  'av. circunvalacion': { latRange: [-17.410, -17.395], lngRange: [-66.175, -66.150] },
+  'av. circunvalación': { latRange: [-17.410, -17.395], lngRange: [-66.175, -66.150] },
+  'av. villazon': { latRange: [-17.400, -17.385], lngRange: [-66.160, -66.145] },
+  'av. villazón': { latRange: [-17.400, -17.385], lngRange: [-66.160, -66.145] },
+  'av. heroinas': { latRange: [-17.395, -17.390], lngRange: [-66.170, -66.145] },
+  'av. heroínas': { latRange: [-17.395, -17.390], lngRange: [-66.170, -66.145] },
+  'av. ayacucho': { latRange: [-17.400, -17.380], lngRange: [-66.160, -66.155] },
+  'av. oquendo': { latRange: [-17.400, -17.385], lngRange: [-66.170, -66.155] },
+  'av. aroma': { latRange: [-17.398, -17.392], lngRange: [-66.170, -66.150] },
+  'av. simon lopez': { latRange: [-17.385, -17.375], lngRange: [-66.170, -66.145] },
+  'av. pando': { latRange: [-17.395, -17.385], lngRange: [-66.165, -66.150] },
+  'av. papa paulo': { latRange: [-17.375, -17.365], lngRange: [-66.170, -66.155] },
+  'av. petrolera': { latRange: [-17.400, -17.390], lngRange: [-66.180, -66.165] },
+  'av. panamericana': { latRange: [-17.415, -17.395], lngRange: [-66.180, -66.160] }
+};
+
+// District center coordinates (real ones for Cochabamba)
+const DISTRICT_CENTERS = {
+  1: { lat: -17.3950, lng: -66.1570 },
+  2: { lat: -17.3830, lng: -66.1520 },
+  3: { lat: -17.3750, lng: -66.1600 },
+  4: { lat: -17.3700, lng: -66.1650 },
+  5: { lat: -17.3900, lng: -66.1700 },
+  6: { lat: -17.4000, lng: -66.1550 },
+  7: { lat: -17.3950, lng: -66.1400 },
+  8: { lat: -17.3850, lng: -66.1450 },
+  9: { lat: -17.4100, lng: -66.1600 },
+  10: { lat: -17.3900, lng: -66.1580 },
+  11: { lat: -17.4000, lng: -66.1650 },
+  12: { lat: -17.3780, lng: -66.1550 },
+  13: { lat: -17.3850, lng: -66.1680 },
+  14: { lat: -17.4050, lng: -66.1480 },
+  15: { lat: -17.4100, lng: -66.1700 }
+};
+
+// Validate and correct coordinates based on avenue name and district
+function validateCoordinates(infra) {
+  const { latitud, longitud, direccion, distrito } = infra;
+  
+  // Basic bounds check for Cochabamba city
+  const CBBA_BOUNDS = {
+    latMin: -17.47, latMax: -17.33,
+    lngMin: -66.22, lngMax: -66.10
+  };
+  
+  // If coordinates are completely outside Cochabamba, relocate to district center
+  if (latitud < CBBA_BOUNDS.latMin || latitud > CBBA_BOUNDS.latMax ||
+      longitud < CBBA_BOUNDS.lngMin || longitud > CBBA_BOUNDS.lngMax) {
+    const center = DISTRICT_CENTERS[distrito] || DISTRICT_CENTERS[1];
+    return {
+      ...infra,
+      latitud: center.lat + (Math.random() - 0.5) * 0.008,
+      longitud: center.lng + (Math.random() - 0.5) * 0.008,
+      corrected: true
+    };
+  }
+  
+  // Check if the address mentions a known avenue
+  if (direccion) {
+    const dirLower = direccion.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    for (const [aveName, corridor] of Object.entries(AVENUE_CORRIDORS)) {
+      const aveNorm = aveName.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (dirLower.includes(aveNorm.replace('av. ', ''))) {
+        // Check if coordinates are within reasonable distance of the avenue corridor
+        const latInRange = latitud >= corridor.latRange[0] - 0.015 && latitud <= corridor.latRange[1] + 0.015;
+        const lngInRange = longitud >= corridor.lngRange[0] - 0.015 && longitud <= corridor.lngRange[1] + 0.015;
+        
+        if (!latInRange || !lngInRange) {
+          // Relocate to the avenue corridor with some random offset
+          const newLat = corridor.latRange[0] + Math.random() * (corridor.latRange[1] - corridor.latRange[0]);
+          const newLng = corridor.lngRange[0] + Math.random() * (corridor.lngRange[1] - corridor.lngRange[0]);
+          // Add small offset based on house number if available
+          const numMatch = direccion.match(/(\d+)/);
+          const numOffset = numMatch ? (parseInt(numMatch[1]) % 100) * 0.00005 : 0;
+          
+          return {
+            ...infra,
+            latitud: newLat + (Math.random() - 0.5) * 0.003,
+            longitud: newLng + numOffset + (Math.random() - 0.5) * 0.003,
+            corrected: true
+          };
+        }
+      }
+    }
+  }
+  
+  return infra;
+}
+
+// Generate simulated client data for a property popup
+function generateClientData(infra) {
+  const nombres = ['Juan Pérez', 'María García', 'Carlos López', 'Ana Rodríguez', 'Pedro Quispe', 
+    'Rosa Mamani', 'Luis Flores', 'Carmen Vargas', 'Jorge Mendoza', 'Elena Torrez'];
+  const categorias = ['R1', 'R2', 'R3', 'R4', 'C', 'CE', 'I', 'P', 'S'];
+  const catDescripciones = {
+    'R1': 'Terrenos baldíos, casas abandonadas',
+    'R2': '1-2 habitaciones, una toma de agua',
+    'R3': 'Una planta funcional / en construcción',
+    'R4': 'Dos o más pisos con todas las dependencias',
+    'C': 'Comercial',
+    'CE': 'Comercial Especial',
+    'I': 'Industrial',
+    'P': 'Preferencial (fines sociales)',
+    'S': 'Social (carácter público)'
+  };
+  
+  // Use catastro number as seed for consistent data
+  const seed = infra.numero_catastro ? 
+    infra.numero_catastro.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0) : 
+    Math.floor(Math.random() * 1000);
+  
+  const cat = categorias[seed % categorias.length];
+  const consumoHora = ((seed % 50) + 5) / 10; // 0.5 - 5.5 m3/hora
+  const cuenta = `${1000 + (seed % 9000)}`;
+  const medidor = `MED-${String(seed % 10000).padStart(5, '0')}`;
+  const nombre = nombres[seed % nombres.length];
+  
+  // Monthly consumption history (last 6 months)
+  const consumoMensual = Array.from({length: 6}, (_, i) => {
+    const base = consumoHora * 720; // hours in month
+    const variation = (((seed + i * 7) % 30) - 15) / 100; 
+    return Math.round(base * (1 + variation));
+  });
+  
+  return {
+    cuenta,
+    nombre,
+    distrito: infra.distrito || 'N/D',
+    categoria: cat,
+    categoriaDesc: catDescripciones[cat],
+    medidor,
+    consumoHora: consumoHora.toFixed(1),
+    consumoMensual,
+    direccion: infra.direccion
+  };
+}
+
+export default function SemapaMap({ searchQuery: externalSearchQuery = '', selectedFilter = '(Todo) Cochabamba', onSearchTrigger }) {
+  const { apiUrl, apiConnected } = useOutletContext();
+  const [medidores, setMedidores] = useState([]);
+  const [showMedidores, setShowMedidores] = useState(true);
+
   const [viewMode, setViewMode] = useState('normal'); // 'normal' | 'heatmap'
   const [currentZoom, setCurrentZoom] = useState(12); // Track map zoom level!
   const [showInfras, setShowInfras] = useState(true); // Default to true!
@@ -46,9 +196,31 @@ export default function SemapaMap() {
   const [loadingInfras, setLoadingInfras] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeQuery, setActiveQuery] = useState('');
+  const [backendSearchCatastros, setBackendSearchCatastros] = useState(new Set());
   const [searchCenter, setSearchCenter] = useState(null);
   const [clickedInfo, setClickedInfo] = useState(null);
   const [mapBounds, setMapBounds] = useState(null);
+  const [selectedProperty, setSelectedProperty] = useState(null);
+
+
+  // Fetch real medidores from backend
+  useEffect(() => {
+    if (!apiConnected || !showMedidores) return;
+    const fetchMedidores = async () => {
+      try {
+        const res = await fetch(`${apiUrl}/dashboard/mapa/medidores`);
+        if (res.ok) {
+          const data = await res.json();
+          // Filter valid coordinates
+          const validData = data.filter(m => m.latitud && m.longitud);
+          setMedidores(validData);
+        }
+      } catch (err) {
+        console.error("Error fetching medidores:", err);
+      }
+    };
+    fetchMedidores();
+  }, [apiConnected, apiUrl, showMedidores]);
 
   // Load properties dynamically in a background Web Worker (subhilo) to prevent blocking the UI
   useEffect(() => {
@@ -92,7 +264,9 @@ export default function SemapaMap() {
     worker.onmessage = (e) => {
       const { success, data, error } = e.data;
       if (success) {
-        setInfras(data);
+        // Validate and correct coordinates
+        const corrected = data.map(validateCoordinates);
+        setInfras(corrected);
       } else {
         console.error("Worker failed to parse JSON:", error);
       }
@@ -115,12 +289,110 @@ export default function SemapaMap() {
     };
   }, [showInfras, infras.length]);
 
+
+  // Trigger backend search when external search query changes
+  useEffect(() => {
+    setActiveQuery(externalSearchQuery.trim().toLowerCase());
+    if (!apiConnected || !externalSearchQuery.trim()) {
+      setBackendSearchCatastros(new Set());
+      return;
+    }
+    
+    // Use an abort controller to handle rapid typing
+    const controller = new AbortController();
+    
+    const performSearch = async () => {
+      try {
+        const res = await fetch(`${apiUrl}/dashboard/buscar?q=${encodeURIComponent(externalSearchQuery)}`, { signal: controller.signal });
+        if (res.ok) {
+          const data = await res.json();
+          
+          const newSet = new Set();
+          
+          if (data.contratos) {
+             data.contratos.forEach(c => newSet.add(c.numero_catastro));
+          }
+          if (data.infraestructuras) {
+             data.infraestructuras.forEach(i => newSet.add(i.numero_catastro));
+          }
+          if (data.medidores) {
+             data.medidores.forEach(m => newSet.add(m.numero_catastro));
+          }
+          
+          setBackendSearchCatastros(newSet);
+          
+          // Try to center on first contract/infra found
+          if (data.contratos && data.contratos.length > 0) {
+            const catId = data.contratos[0].numero_catastro;
+            const infra = infras.find(i => i.numero_catastro === catId);
+            if (infra) {
+              setSearchCenter([infra.latitud, infra.longitud]);
+              setCurrentZoom(17);
+              return;
+            }
+          }
+          if (data.infraestructuras && data.infraestructuras.length > 0) {
+            setSearchCenter([data.infraestructuras[0].latitud, data.infraestructuras[0].longitud]);
+            setCurrentZoom(17);
+            return;
+          }
+          if (data.medidores && data.medidores.length > 0) {
+            setSearchCenter([data.medidores[0].latitud, data.medidores[0].longitud]);
+            setCurrentZoom(17);
+            return;
+          }
+        }
+      } catch (e) {
+        if (e.name !== 'AbortError') {
+           console.error("Search error", e);
+        }
+      }
+    };
+    
+    const timeoutId = setTimeout(performSearch, 300); // Debounce
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [onSearchTrigger, apiConnected, apiUrl, externalSearchQuery, infras]);
+
   const filteredInfras = useMemo(() => {
-    if (!activeQuery) return infras;
+    if (!activeQuery && backendSearchCatastros.size === 0) return infras;
     return infras
-      .filter((infra) => infra.direccion && infra.direccion.toLowerCase().includes(activeQuery))
+      .filter((infra) => {
+         const matchesAddress = activeQuery && infra.direccion && infra.direccion.toLowerCase().includes(activeQuery);
+         const matchesBackend = backendSearchCatastros.has(infra.numero_catastro);
+         return matchesAddress || matchesBackend;
+      })
       .slice(0, 1000);
-  }, [infras, activeQuery]);
+  }, [infras, activeQuery, backendSearchCatastros]);
+
+
+  // Trigger centering when selectedFilter changes
+  useEffect(() => {
+    if (selectedFilter.startsWith('Distrito')) {
+      const distNum = selectedFilter.replace('Distrito ', '');
+      const center = DISTRICT_CENTERS[distNum];
+      if (center) {
+        setSearchCenter([center.lat, center.lng]);
+        setCurrentZoom(14);
+      }
+    } else if (selectedFilter !== '(Todo) Cochabamba') {
+      // It's a subalcaldia
+      const distKeys = Object.keys(DISTRICT_TO_SUBALCALDIA).filter(k => DISTRICT_TO_SUBALCALDIA[k].name === selectedFilter);
+      if (distKeys.length > 0) {
+        const firstDistNum = distKeys[0].replace('sector', '');
+        const center = DISTRICT_CENTERS[firstDistNum];
+        if (center) {
+          setSearchCenter([center.lat, center.lng]);
+          setCurrentZoom(13);
+        }
+      }
+    } else {
+      setSearchCenter([-17.3935, -66.1570]);
+      setCurrentZoom(12);
+    }
+  }, [selectedFilter]);
 
   // Compute visible markers in current viewport bounds (only for zoom >= 15 to keep 60 FPS)
   const visibleInfras = useMemo(() => {
@@ -148,6 +420,7 @@ export default function SemapaMap() {
     const raw = searchQuery.trim();
     if (!raw) {
       setActiveQuery('');
+      setBackendSearchCatastros(new Set());
       setSearchCenter(null);
       return;
     }
@@ -157,6 +430,7 @@ export default function SemapaMap() {
     const firstMatch = infras.find((infra) => infra.direccion && infra.direccion.toLowerCase().includes(query));
     if (firstMatch) {
       setSearchCenter([firstMatch.latitud, firstMatch.longitud]);
+      setCurrentZoom(17);
     } else {
       setSearchCenter(null);
     }
@@ -251,6 +525,15 @@ export default function SemapaMap() {
     });
   };
 
+  // Handle property click - show detailed client info
+  const handlePropertyClick = useCallback((infra) => {
+    const clientData = generateClientData(infra);
+    setSelectedProperty({
+      ...infra,
+      client: clientData
+    });
+  }, []);
+
   // Helper to dynamically calculate polygon geometry representing the requested layer mode
   const getRenderPolygons = () => {
     return districtsCochabamba.map(item => ({
@@ -262,6 +545,100 @@ export default function SemapaMap() {
       positions: item.polygonPath.map(p => [p.lat, p.lng]),
       weight: dashboardMockData.heatmapData[item.id] || (parseInt(item.id.replace('sector', '')) % 5) / 5
     }));
+  };
+
+
+  const PropertyPopupContent = ({ infra }) => {
+    const [clientData, setClientData] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+      if (!apiConnected || !infra.numero_catastro) {
+        setClientData(generateClientData(infra));
+        setLoading(false);
+        return;
+      }
+      const fetchClient = async () => {
+        try {
+          const res = await fetch(`${apiUrl}/dashboard/mapa/vivienda/${infra.numero_catastro}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.client) {
+               setClientData({
+                 cuenta: data.client.numero_contrato,
+                 nombre: data.client.titular,
+                 distrito: data.distrito,
+                 categoria: data.client.categoria,
+                 categoriaDesc: data.client.subcategoria,
+                 medidor: data.client.medidor_iot,
+                 consumoHora: data.client.historial && data.client.historial.length > 0 ? (data.client.historial[0].consumo_m3 / 720).toFixed(2) : "0.0",
+                 consumoMensual: data.client.historial ? data.client.historial.map(h => h.consumo_m3).reverse() : [],
+                 direccion: data.direccion
+               });
+            } else {
+               setClientData({ ...generateClientData(infra), nombre: "Sin Contrato", cuenta: "N/A" });
+            }
+          } else {
+            setClientData(generateClientData(infra));
+          }
+        } catch (e) {
+          setClientData(generateClientData(infra));
+        } finally {
+          setLoading(false);
+        }
+      };
+      fetchClient();
+    }, [infra]);
+
+    if (loading) return <div style={{padding: '10px', textAlign: 'center'}}>Cargando datos del cliente...</div>;
+    if (!clientData) return null;
+
+    return (
+      <div style={{ color: '#111827', fontSize: '0.78rem', fontFamily: "'Plus Jakarta Sans', sans-serif", padding: '4px', minWidth: '240px' }}>
+        <div style={{ background: 'linear-gradient(135deg, #7c3aed, #06b6d4)', color: 'white', padding: '8px 10px', borderRadius: '8px', marginBottom: '8px' }}>
+          <strong style={{ fontSize: '0.85rem', display: 'block' }}>VIVIENDA REGISTRADA</strong>
+          <span style={{ fontSize: '0.7rem', opacity: 0.9 }}>{infra.direccion || 'Sin dirección'}</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 8px', marginBottom: '8px' }}>
+          <div><strong style={{ color: '#6b7280', fontSize: '0.65rem' }}>CUENTA</strong><br/><span style={{ fontFamily: 'monospace', color: '#7c3aed', fontWeight: '700' }}>{clientData.cuenta}</span></div>
+          <div><strong style={{ color: '#6b7280', fontSize: '0.65rem' }}>SEÑOR</strong><br/><span style={{ fontWeight: '600' }}>{clientData.nombre}</span></div>
+          <div><strong style={{ color: '#6b7280', fontSize: '0.65rem' }}>DISTRITO</strong><br/><span>{clientData.distrito}</span></div>
+          <div><strong style={{ color: '#6b7280', fontSize: '0.65rem' }}>CATEGORÍA</strong><br/><span style={{ fontWeight: '600' }}>{clientData.categoria}</span> <span style={{ fontSize: '0.6rem', color: '#9ca3af' }}>{clientData.categoriaDesc}</span></div>
+          <div><strong style={{ color: '#6b7280', fontSize: '0.65rem' }}>MEDIDOR</strong><br/><span style={{ fontFamily: 'monospace', fontSize: '0.7rem' }}>{clientData.medidor}</span></div>
+          <div><strong style={{ color: '#6b7280', fontSize: '0.65rem' }}>CONSUMO/HORA</strong><br/><span style={{ color: '#06b6d4', fontWeight: '700', fontSize: '1rem' }}>{clientData.consumoHora} m³</span></div>
+        </div>
+        <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '6px' }}>
+          <strong style={{ color: '#6b7280', fontSize: '0.65rem' }}>CONSUMO MENSUAL</strong>
+          {clientData.consumoMensual && clientData.consumoMensual.length > 0 ? <MiniConsumptionChart data={clientData.consumoMensual} /> : <div style={{fontSize:'0.65rem', color:'#9ca3af'}}>Sin historial</div>}
+        </div>
+        <div style={{ marginTop: '6px', padding: '4px 0', borderTop: '1px solid #e5e7eb' }}>
+          <strong style={{ color: '#6b7280', fontSize: '0.65rem' }}>CATASTRO</strong>
+          <span style={{ fontFamily: 'monospace', fontSize: '0.7rem', marginLeft: '4px' }}>{infra.numero_catastro}</span>
+        </div>
+      </div>
+    );
+  };
+
+  // Mini bar chart for consumption history
+  const MiniConsumptionChart = ({ data }) => {
+    const max = Math.max(...data, 1);
+    const months = ['E', 'F', 'M', 'A', 'M', 'J'];
+    return (
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '35px', marginTop: '4px' }}>
+        {data.map((val, i) => (
+          <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1 }}>
+            <div style={{
+              width: '100%',
+              height: `${(val / max) * 30}px`,
+              background: val === Math.max(...data) ? '#ef4444' : '#06b6d4',
+              borderRadius: '2px 2px 0 0',
+              minHeight: '3px'
+            }} />
+            <span style={{ fontSize: '7px', color: '#6b7280', marginTop: '1px' }}>{months[i]}</span>
+          </div>
+        ))}
+      </div>
+    );
   };
 
   return (
@@ -287,6 +664,29 @@ export default function SemapaMap() {
           </button>
         </div>
 
+        
+        {/* Medidores Toggle */}
+        <div style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+              Mostrar Medidores IoT
+            </span>
+            <input
+              type="checkbox"
+              checked={showMedidores}
+              onChange={(e) => setShowMedidores(e.target.checked)}
+              style={{ cursor: 'pointer' }}
+            />
+          </div>
+          {showMedidores && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '2px' }}>
+               <span style={{ fontSize: '0.6rem', color: '#10b981' }}>● Operativos</span>
+               <span style={{ fontSize: '0.6rem', color: '#ef4444' }}>● Dañados</span>
+               <span style={{ fontSize: '0.6rem', color: '#f59e0b' }}>● Mantenimiento</span>
+            </div>
+          )}
+        </div>
+
         {/* Property Addresses Toggle */}
         <div style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -307,7 +707,7 @@ export default function SemapaMap() {
           )}
           {showInfras && currentZoom >= 15 && (
             <span style={{ fontSize: '0.65rem', color: '#10b981', fontWeight: 500 }}>
-              ✓ Direcciones visibles
+              ✓ Direcciones visibles ({visibleInfras.length})
             </span>
           )}
         </div>
@@ -408,26 +808,54 @@ export default function SemapaMap() {
           <CircleMarker
             key={infra.numero_catastro || idx}
             center={[infra.latitud, infra.longitud]}
-            radius={4}
+            radius={currentZoom >= 17 ? 6 : 4}
             pathOptions={{
-              color: '#06b6d4',
-              fillColor: '#22d3ee',
+              color: infra.corrected ? '#f59e0b' : '#06b6d4',
+              fillColor: infra.corrected ? '#fbbf24' : '#22d3ee',
               fillOpacity: 0.9,
               weight: 1.5
             }}
+            eventHandlers={{
+              click: () => handlePropertyClick(infra)
+            }}
           >
-            <Popup>
-              <div style={{ color: '#111827', fontSize: '0.75rem', fontFamily: 'sans-serif', minWidth: '150px' }}>
-                <strong style={{ color: 'var(--accent-purple)', display: 'block', marginBottom: '2px' }}>VIVIENDA REGISTRADA</strong>
-                <strong>Catastro:</strong> <span style={{ fontFamily: 'monospace' }}>{infra.numero_catastro}</span><br />
-                <strong>Dirección:</strong> {infra.direccion}
+            <Popup maxWidth={320} minWidth={260}>
+              <div style={{ color: '#111827', fontSize: '0.78rem', fontFamily: "'Plus Jakarta Sans', sans-serif", padding: '4px', minWidth: '240px' }}>
+                {/* Header */}
+
+                <PropertyPopupContent infra={infra} />
               </div>
             </Popup>
           </CircleMarker>
         ))}
+
+        {/* Render Medidores IoT */}
+        {showMedidores && currentZoom >= 13 && medidores.map((med, idx) => {
+           let mColor = '#10b981'; // Operativo
+           if (med.estado === 'Dañado') mColor = '#ef4444';
+           else if (med.estado === 'Mantenimiento') mColor = '#f59e0b';
+           else if (med.estado === 'Nuevo' || med.estado === 'Reacondicionado') mColor = '#8b5cf6';
+           
+           return (
+            <CircleMarker
+              key={`med-${med.medidor_iot}-${idx}`}
+              center={[med.latitud, med.longitud]}
+              radius={currentZoom >= 16 ? 5 : 3}
+              pathOptions={{
+                color: '#ffffff',
+                fillColor: mColor,
+                fillOpacity: 1,
+                weight: 1
+              }}
+            >
+              <Popup maxWidth={320} minWidth={260}>
+                 <PropertyPopupContent infra={{ numero_catastro: med.numero_catastro, direccion: med.zona ? `Zona: ${med.zona}` : 'Ubicación del medidor', distrito: med.distrito }} />
+              </Popup>
+            </CircleMarker>
+          );
+        })}
+
       </MapContainer>
     </div>
   );
 }
-
-

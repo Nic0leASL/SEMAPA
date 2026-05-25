@@ -1,19 +1,36 @@
 export const dashboardMockData = {
-  // Presidente Dashboard
+  // Presidente / Alcaldía Dashboard - Enfocado en consumo y medidores
   alcaldia: {
-    consumoTotal: '124,530',
-    facturacionTotal: '850,200',
-    recaudado: '780,000',
-    deudaMora: '70,200',
-    efectividadCobro: 91.7,
-    clientesMora: 143,
-    topZonas: [
-      { id: 1, zona: 'Centro Histórico (Distrito 10)', consumo: '12,500', facturado: '85,000' },
-      { id: 2, zona: 'Cala Cala (Distrito 12)', consumo: '10,200', facturado: '72,400' },
-      { id: 3, zona: 'Queru Queru (Distrito 12)', consumo: '9,800', facturado: '69,000' },
-      { id: 4, zona: 'Sarco (Distrito 3)', consumo: '8,500', facturado: '60,200' },
-      { id: 5, zona: 'Temporal (Distrito 2)', consumo: '7,100', facturado: '49,800' }
+    consumoCiudad: '25.254.325',
+    medidoresReportando: '109.309',
+    medidoresErrores: '9.122',
+    // Distribución mensual de consumo (m3)
+    distribucionMensual: [
+      { mes: 'Ene', consumo: 1800000, color: '#f59e0b' },
+      { mes: 'Feb', consumo: 1950000, color: '#f59e0b' },
+      { mes: 'Mar', consumo: 2100000, color: '#f59e0b' },
+      { mes: 'Abr', consumo: 2350000, color: '#f59e0b' },
+      { mes: 'May', consumo: 2800000, color: '#1aa3ff' },
+      { mes: 'Jun', consumo: 3200000, color: '#1aa3ff' },
+      { mes: 'Jul', consumo: 2900000, color: '#f59e0b' },
+      { mes: 'Ago', consumo: 2600000, color: '#22c55e' }
     ],
+    // Top zonas por consumo (m3)
+    topZonasConsumo: [
+      { zona: 'QUERU QUERU ALTO', consumo: 1500000 },
+      { zona: 'ARANJUEZ ALTO', consumo: 2800000 },
+      { zona: 'TEMPORAL', consumo: 3400000 },
+      { zona: 'CALA CALA', consumo: 4500000 },
+      { zona: 'SARCO', consumo: 13100000 },
+      { zona: 'COCHABAMBA', consumo: 95100000 },
+      { zona: 'PAMPA', consumo: 11200000 },
+      { zona: 'QUERU QUERU ALTO', consumo: 2300000 },
+      { zona: 'SARCO', consumo: 111700000 }
+    ],
+    // Gauge: litros promedio por habitante por día vs OMS (100 l/día)
+    promedioConsumoHabitante: 125,
+    estandarOMS: 100,
+    // Estrés hídrico
     estresHidrico: [
       { distrito: 'Distrito 8', nivel: 'Crítico', porcentaje: 85 },
       { distrito: 'Distrito 9', nivel: 'Alto', porcentaje: 72 },
@@ -37,6 +54,16 @@ export const dashboardMockData = {
       { id: 2, tipo: 'Sin Señal RF', cantidad: 1850, estado: 'Crítico' },
       { id: 3, tipo: 'Posible Fuga', cantidad: 342, estado: 'Crítico' },
       { id: 4, tipo: 'Tampering (Fraude)', cantidad: 56, estado: 'Investigación' }
+    ],
+    topMedidoresFallas: [
+      { medidor: 'MED-IOT-00482', zona: 'Queru Queru', errores: 47, ultimoError: 'Sin Señal RF', estado: 'Crítico' },
+      { medidor: 'MED-IOT-01293', zona: 'Temporal', errores: 38, ultimoError: 'Falla Batería', estado: 'Crítico' },
+      { medidor: 'MED-IOT-00871', zona: 'Cala Cala', errores: 31, ultimoError: 'Lectura Anómala', estado: 'Pendiente' },
+      { medidor: 'MED-IOT-02104', zona: 'Sarco', errores: 28, ultimoError: 'Sin Señal RF', estado: 'Crítico' },
+      { medidor: 'MED-IOT-00156', zona: 'Villa Busch', errores: 25, ultimoError: 'Tampering', estado: 'Investigación' },
+      { medidor: 'MED-IOT-03387', zona: 'Pampa', errores: 22, ultimoError: 'Falla Batería', estado: 'Pendiente' },
+      { medidor: 'MED-IOT-01749', zona: 'Aranjuez', errores: 19, ultimoError: 'Posible Fuga', estado: 'Crítico' },
+      { medidor: 'MED-IOT-00623', zona: 'Jaihuayco', errores: 17, ultimoError: 'Sin Señal RF', estado: 'Pendiente' }
     ]
   },
   
@@ -46,7 +73,6 @@ export const dashboardMockData = {
     proyeccionCierre: '3,100,000',
     tasaCrecimiento: '+5.2%',
     facturasEmitidas: '120,500',
-    pagosDigitales: '68%',
     tendencia: [
       { mes: 'Ene', ingresos: 2100000 },
       { mes: 'Feb', ingresos: 2150000 },

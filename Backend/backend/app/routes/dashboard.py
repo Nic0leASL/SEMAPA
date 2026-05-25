@@ -8,18 +8,27 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboards"])
 def get_session():
     return CassandraConnection.get_session()
 
+def safe_query(session, query, default=None):
+    try:
+        return list(session.execute(query))
+    except Exception as e:
+        import logging
+        logger = logging.getLogger("CassandraSafeQuery")
+        logger.warning(f"Query failed: {query} - Error: {e}")
+        return default if default is not None else []
+
 @router.get("/presidente")
 async def get_presidente_dashboard():
     session = get_session()
     try:
         # 1. Fetch general statistics
-        fin_rows = list(session.execute("SELECT ingresos_recaudados, deuda_total, total_clientes_morosos FROM reporte_financiero WHERE key = 'global'"))
+        fin_rows = safe_query(session, "SELECT ingresos_recaudados, deuda_total, total_clientes_morosos FROM reporte_financiero WHERE key = 'global'")
         total_recaudado = fin_rows[0].ingresos_recaudados if fin_rows else 0.0
         total_deuda = fin_rows[0].deuda_total if fin_rows else 0.0
         morosos_count = fin_rows[0].total_clientes_morosos if fin_rows else 0
         
         # Calculate totals from zones
-        zona_rows = list(session.execute("SELECT zona, consumo_total, facturacion_total, lecturas_count FROM reporte_consumo_zona"))
+        zona_rows = safe_query(session, "SELECT zona, consumo_total, facturacion_total, lecturas_count FROM reporte_consumo_zona")
         total_consumo = sum(z.consumo_total for z in zona_rows)
         total_facturacion = sum(z.facturacion_total for z in zona_rows)
         total_lecturas = sum(z.lecturas_count for z in zona_rows)
@@ -32,7 +41,7 @@ async def get_presidente_dashboard():
         )[:10]
 
         # 3. Consumo por distrito
-        dist_rows = list(session.execute("SELECT distrito, sub_alcaldia, consumo_total, habitantes, per_capita FROM reporte_consumo_distrito"))
+        dist_rows = safe_query(session, "SELECT distrito, sub_alcaldia, consumo_total, habitantes, per_capita FROM reporte_consumo_distrito")
         consumo_distrito = []
         mapa_calor = []
         estres_hidrico = []
@@ -102,7 +111,7 @@ async def get_administrador_dashboard():
     session = get_session()
     try:
         # 1. Fetch meter states counts
-        med_rows = list(session.execute("SELECT total_danados, total_mantenimiento, total_anomalias FROM reporte_errores WHERE key = 'summary'"))
+        med_rows = safe_query(session, "SELECT total_danados, total_mantenimiento, total_anomalias FROM reporte_errores WHERE key = 'summary'")
         total_danados = med_rows[0].total_danados if med_rows else 0
         total_mantenimiento = med_rows[0].total_mantenimiento if med_rows else 0
         total_anomalias = med_rows[0].total_anomalias if med_rows else 0
@@ -113,7 +122,7 @@ async def get_administrador_dashboard():
         inactive_meters = total_danados + total_mantenimiento
 
         # 2. IoT Errors list
-        error_rows = list(session.execute("SELECT medidor_iot, fecha_hora_error, codigo_error, descripcion, radiobase, distrito, zona FROM errores_iot LIMIT 20"))
+        error_rows = safe_query(session, "SELECT medidor_iot, fecha_hora_error, codigo_error, descripcion, radiobase, distrito, zona FROM errores_iot LIMIT 20")
         errores_iot = []
         zonas_con_fallas = {}
         
@@ -139,12 +148,12 @@ async def get_administrador_dashboard():
 
         # 3. Recent readings
         # Since we cannot scan lecturas_by_medidor globally, we fetch from a major zone (e.g. ALALAY NORTE)
-        readings_rows = list(session.execute("SELECT medidor_iot, fecha_hora_reading, lectura_actual, consumo, pagado FROM lecturas_by_zona LIMIT 50"))
+        readings_rows = safe_query(session, "SELECT medidor_iot, fecha_hora_reading, lectura_actual, consumo, pagado FROM lecturas_by_zona LIMIT 50")
         # Wait, the table structure in schema is:
         # lecturas_by_zona (zona, fecha_hora_lectura, medidor_iot, lectura_anterior, lectura_actual, consumo, monto_facturado, pagado)
         # Let's run a query to get recent readings from reporting tables or scan with a default zone.
         # Actually, let's query a known zone 'ALALAY NORTE'
-        recent_readings_rows = list(session.execute("SELECT medidor_iot, fecha_hora_lectura, lectura_actual, consumo, pagado FROM lecturas_by_zona WHERE zona = 'ALALAY NORTE' LIMIT 30"))
+        recent_readings_rows = safe_query(session, "SELECT medidor_iot, fecha_hora_lectura, lectura_actual, consumo, pagado FROM lecturas_by_zona WHERE zona = 'ALALAY NORTE' LIMIT 30")
         recent_readings = []
         for r in recent_readings_rows:
             recent_readings.append({
@@ -156,7 +165,7 @@ async def get_administrador_dashboard():
             })
 
         # 4. Water distribution (by zone)
-        zona_rows = list(session.execute("SELECT zona, consumo_total FROM reporte_consumo_zona"))
+        zona_rows = safe_query(session, "SELECT zona, consumo_total FROM reporte_consumo_zona")
         total_consumo = sum(z.consumo_total for z in zona_rows) or 1.0
         distribucion_agua = sorted(
             [{"zona": z.zona, "consumo_m3": round(z.consumo_total, 2), "porcentaje": round((z.consumo_total / total_consumo) * 100, 2)} for z in zona_rows],
@@ -186,7 +195,7 @@ async def get_finanzas_dashboard():
     session = get_session()
     try:
         # 1. Fetch reporting stats
-        fin_rows = list(session.execute("SELECT ingresos_recaudados, deuda_total, total_clientes_morosos FROM reporte_financiero WHERE key = 'global'"))
+        fin_rows = safe_query(session, "SELECT ingresos_recaudados, deuda_total, total_clientes_morosos FROM reporte_financiero WHERE key = 'global'")
         total_recaudado = fin_rows[0].ingresos_recaudados if fin_rows else 0.0
         total_deuda = fin_rows[0].deuda_total if fin_rows else 0.0
         morosos_count = fin_rows[0].total_clientes_morosos if fin_rows else 0
@@ -196,7 +205,7 @@ async def get_finanzas_dashboard():
 
         # 2. Projected revenues: based on average active contracts and normal tariffs
         # Let's say we project next month to be +5% or based on total contracts count * base consumption
-        contratos_count = list(session.execute("SELECT COUNT(*) FROM contratos"))
+        contratos_count = safe_query(session, "SELECT COUNT(*) FROM contratos")
         num_contratos = contratos_count[0].count if contratos_count else 0
         # If average consumption is 15 m3 and average price is 3.50 Bs
         proyeccion_ingresos = num_contratos * 15 * 3.50
@@ -207,11 +216,11 @@ async def get_finanzas_dashboard():
         excesivo_readings = []
         try:
             # Look in ALALAY NORTE
-            sample_rows = list(session.execute("SELECT medidor_iot, fecha_hora_lectura, lectura_anterior, lectura_actual, consumo, monto_facturado FROM lecturas_by_zona WHERE zona = 'ALALAY NORTE' LIMIT 200"))
+            sample_rows = safe_query(session, "SELECT medidor_iot, fecha_hora_lectura, lectura_anterior, lectura_actual, consumo, monto_facturado FROM lecturas_by_zona WHERE zona = 'ALALAY NORTE' LIMIT 200")
             for r in sample_rows:
                 if r.consumo > 40: # threshold 40 m3
                     # Lookup contract
-                    contrato_info = list(session.execute(f"SELECT numero_contrato, titular_contrato FROM contratos WHERE medidor_iot = '{r.medidor_iot}' ALLOW FILTERING"))
+                    contrato_info = safe_query(session, f"SELECT numero_contrato, titular_contrato FROM contratos WHERE medidor_iot = '{r.medidor_iot}' ALLOW FILTERING")
                     contrato_num = contrato_info[0].numero_contrato if contrato_info else "CT-Desconocido"
                     titular = contrato_info[0].titular_contrato if contrato_info else "Desconocido"
                     
@@ -228,11 +237,11 @@ async def get_finanzas_dashboard():
 
         # 4. Contratos con deuda (sample list of morosos)
         # Fetch from lecturas_unpaid_by_contrato
-        unpaid_sample = list(session.execute("SELECT numero_contrato, fecha_hora_lectura, medidor_iot, consumo, monto_facturado FROM lecturas_unpaid_by_contrato LIMIT 30"))
+        unpaid_sample = safe_query(session, "SELECT numero_contrato, fecha_hora_lectura, medidor_iot, consumo, monto_facturado FROM lecturas_unpaid_by_contrato LIMIT 30")
         contratos_con_deuda = []
         for u in unpaid_sample:
             # Get details
-            contrato_details = list(session.execute(f"SELECT titular_contrato, ci_titular, categoria FROM contratos WHERE numero_contrato = '{u.numero_contrato}'"))
+            contrato_details = safe_query(session, f"SELECT titular_contrato, ci_titular, categoria FROM contratos WHERE numero_contrato = '{u.numero_contrato}'")
             titular = contrato_details[0].titular_contrato if contrato_details else "Cliente SEMAPA"
             ci = contrato_details[0].ci_titular if contrato_details else "N/A"
             categoria = contrato_details[0].categoria if contrato_details else "Residencial"
@@ -325,4 +334,3 @@ async def get_cluster_status():
             ],
             "nodetool_status": f"Status=Up/Down\n|/ State=Normal/Leaving/Joining/Moving\n--  Address       Load       Tokens  Owns (effective)  Host ID                               Rack\nDN  100.114.64.8  354.21 KiB 16      50.0%             8b5d3c8d-3921-4b1c-99d9-11c67e72ff08  rack1\nDN  100.71.121.5  324.95 KiB 16      50.0%             fa2c8db2-2321-482a-a921-77ee8ca41cc2  rack1\n\nCassandra desconectado: {str(e)}"
         }
-
