@@ -1,4 +1,6 @@
 import logging
+import os
+import pandas as pd
 from fastapi import APIRouter, HTTPException
 from app.cassandra.connection import CassandraConnection
 
@@ -288,7 +290,89 @@ async def get_mapa_vivienda(id: str):
             "longitud": r.longitud,
             "valor_catastral": r.valor_catastral
         }
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/mapa/vivienda/{id}")
+async def get_mapa_vivienda(id: str):
+    session = get_session()
+    try:
+        rows = list(session.execute(f"SELECT numero_catastro, propietario, direccion, zona, distrito, latitud, longitud, valor_catastral FROM infraestructuras WHERE numero_catastro = '{id}'"))
+        if not rows:
+            raise HTTPException(status_code=404, detail=f"Catastro ID '{id}' not found.")
+        
+        r = rows[0]
+        return {
+            "numero_catastro": r.numero_catastro,
+            "propietario": r.propietario,
+            "direccion": r.direccion,
+            "zona": r.zona,
+            "distrito": r.distrito,
+            "latitud": r.latitud,
+            "longitud": r.longitud,
+            "valor_catastral": r.valor_catastral
+        }
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+CSV_PATH = r"c:\Users\manuc\Universidad\Sistemas distribuidos\Cassandra\SEMAPA\Backend\datos\03 Practica 5 Recursos infraestructuras_cochabamba.csv"
+CSV_COORD_PATH = r"c:\Users\manuc\Universidad\Sistemas distribuidos\Cassandra\SEMAPA\Backend\datos\infraestructuras_coordenadas.csv"
+
+@router.get("/mapa/infraestructuras")
+async def get_mapa_infraestructuras(distrito: int = None, buscar: str = None, limit: int = 500):
+    # Try reading the lightweight coordinate CSV file first if it exists,
+    # as it contains the full set of extracted properties and loads instantly.
+    try:
+        path_to_use = CSV_COORD_PATH if os.path.exists(CSV_COORD_PATH) else CSV_PATH
+        if os.path.exists(path_to_use):
+            df = pd.read_csv(path_to_use, encoding='latin1')
+            df_filtered = df
+            if buscar:
+                df_filtered = df_filtered[df_filtered['direccion'].str.contains(buscar, case=False, na=False)]
+            if distrito is not None:
+                df_filtered = df_filtered[df_filtered['distrito'] == distrito]
+            
+            # Drop entries without valid coordinates if using the original CSV as fallback
+            if path_to_use == CSV_PATH:
+                df_filtered = df_filtered.dropna(subset=['latitud', 'longitud'])
+            
+            df_limit = df_filtered.head(limit)
+            return [
+                {
+                    "numero_catastro": str(row['numero_catastro']),
+                    "direccion": str(row['direccion']),
+                    "latitud": float(row['latitud']),
+                    "longitud": float(row['longitud'])
+                } for _, row in df_limit.iterrows()
+            ]
+    except Exception as csv_err:
+        logger.warning(f"CSV read failed: {csv_err}. Falling back to database scan.")
+
+    session = get_session()
+    try:
+        if distrito is not None:
+            query = f"SELECT numero_catastro, direccion, latitud, longitud FROM infraestructuras WHERE distrito = {distrito} LIMIT 2000 ALLOW FILTERING"
+        else:
+            query = f"SELECT numero_catastro, direccion, latitud, longitud FROM infraestructuras LIMIT 2000"
+        
+        rows = list(session.execute(query))
+        results = [
+            {
+                "numero_catastro": r.numero_catastro,
+                "direccion": r.direccion,
+                "latitud": r.latitud,
+                "longitud": r.longitud
+            } for r in rows
+        ]
+        
+        if buscar:
+            buscar_lower = buscar.lower()
+            results = [r for r in results if r["direccion"] and buscar_lower in r["direccion"].lower()]
+            
+        return results[:limit]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -1,61 +1,107 @@
-import React from 'react';
-import { Server, ShieldAlert } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { useOutletContext } from 'react-router-dom';
+import { Server, ShieldAlert, ShieldCheck, Cpu } from 'lucide-react';
 
 export default function ClusterMonitor() {
+  const { apiUrl, apiConnected } = useOutletContext();
+  const [clusterData, setClusterData] = useState({
+    database_connected: false,
+    hosts: [
+      { address: '100.114.64.8', is_up: true, datacenter: 'dc1', rack: 'rack1', release_version: '4.1' },
+      { address: '100.71.121.5', is_up: false, datacenter: 'dc1', rack: 'rack1', release_version: '4.1' }
+    ],
+    nodetool_status: `Status=Up/Down\n|/ State=Normal/Leaving/Joining/Moving\n--  Address       Load       Tokens  Owns (effective)  Host ID                               Rack\nUN  100.114.64.8  354.21 KiB 16      50.0%             8b5d3c8d-3921-4b1c-99d9-11c67e72ff08  rack1\nDN  100.71.121.5  324.95 KiB 16      50.0%             fa2c8db2-2321-482a-a921-77ee8ca41cc2  rack1`
+  });
+  const [loading, setLoading] = useState(false);
+
+  const fetchStatus = async () => {
+    if (!apiConnected) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`${apiUrl}/dashboard/cluster-status`);
+      if (res.ok) {
+        const data = await res.json();
+        setClusterData(data);
+      }
+    } catch (err) {
+      console.error("Error fetching cluster status:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (apiConnected) {
+      fetchStatus();
+      const interval = setInterval(fetchStatus, 8000);
+      return () => clearInterval(interval);
+    } else {
+      // Fallback mock representation (PC 1 is Online, PC 2 is Offline)
+      setClusterData({
+        database_connected: false,
+        hosts: [
+          { address: '100.114.64.8', is_up: true, datacenter: 'dc1', rack: 'rack1', release_version: '4.1' },
+          { address: '100.71.121.5', is_up: false, datacenter: 'dc1', rack: 'rack1', release_version: '4.1' }
+        ],
+        nodetool_status: `Status=Up/Down\n|/ State=Normal/Leaving/Joining/Moving\n--  Address       Load       Tokens  Owns (effective)  Host ID                               Rack\nUN  100.114.64.8  354.21 KiB 16      50.0%             8b5d3c8d-3921-4b1c-99d9-11c67e72ff08  rack1\nDN  100.71.121.5  324.95 KiB 16      50.0%             fa2c8db2-2321-482a-a921-77ee8ca41cc2  rack1`
+      });
+    }
+  }, [apiConnected, apiUrl]);
+
+  // Find statuses in loaded data
+  const node1 = clusterData.hosts.find(h => h.address === '100.114.64.8') || { is_up: true };
+  const node2 = clusterData.hosts.find(h => h.address === '100.71.121.5') || { is_up: false };
+
+  const isDegraded = !node2.is_up;
+
   return (
-    <div className="dashboard-view">
+    <div className="dashboard-view animate-fade-in" style={{ animation: 'slideDown 0.4s ease-out' }}>
       <div className="top-header">
         <h2 className="page-title">Monitoreo de Clúster Cassandra</h2>
-        <div className="connection-status">
-          <span className="status-dot status-warning"></span>
-          <span>Nodo 2 Offline - RF=1</span>
+        <div style={{ display: 'flex', gap: '0.8rem', alignItems: 'center' }}>
+          <span className={`api-mode-pill ${apiConnected ? 'mode-realtime' : 'mode-mocked'}`}>
+            {apiConnected ? 'Tiempo Real' : 'Modo Mock'}
+          </span>
+          <div className="connection-status">
+            <span className={`status-dot ${isDegraded ? 'status-warning' : 'status-online'}`}></span>
+            <span>{isDegraded ? 'Clúster Degradado - RF=1' : 'Clúster Saludable (2 Nodos UN)'}</span>
+          </div>
         </div>
       </div>
 
-      <div className="glass" style={{ padding: '1rem 1.5rem', marginBottom: '2rem', display: 'flex', gap: '1rem', alignItems: 'center', backgroundColor: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', color: 'var(--accent-amber)' }}>
-        <ShieldAlert />
-        <div>
-          <strong>ADVERTENCIA ACADÉMICA (Caída de Nodo en RF=1):</strong>
-          <p style={{ margin: 0, fontSize: '0.9rem', marginTop: '4px' }}>El Nodo 2 (100.114.64.8) se encuentra desconectado. Las consultas para las particiones almacenadas en dicho nodo fallarán debido a que no hay replicación redundante (RF=1). El Nodo 1 sigue operando normalmente.</p>
+      {isDegraded ? (
+        <div className="warning-panel warning-amber" style={{ display: 'flex', gap: '1rem', alignItems: 'center', margin: '1rem 0' }}>
+          <ShieldAlert size={28} />
+          <div>
+            <strong>ADVERTENCIA ACADÉMICA (Caída de Nodo en RF=1):</strong>
+            <p style={{ margin: 0, fontSize: '0.85rem', marginTop: '4px' }}>
+              El <strong>Nodo 2 (IP: 100.71.121.5)</strong> se encuentra desconectado. Dado que el factor de replicación está configurado en <strong>RF = 1 (Sharding horizontal puro sin copias redundantes)</strong>, cualquier consulta o dato perteneciente a los rangos de tokens asignados a la PC Secundaria fallará. El Nodo 1 sigue operativo.
+            </p>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="warning-panel" style={{ display: 'flex', gap: '1rem', alignItems: 'center', margin: '1rem 0', backgroundColor: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.2)', color: '#a7f3d0' }}>
+          <ShieldCheck size={28} style={{ color: 'var(--accent-emerald)' }} />
+          <div>
+            <strong>CLÚSTER OPERATIVO Y BALANCEADO (RF=1):</strong>
+            <p style={{ margin: 0, fontSize: '0.85rem', marginTop: '4px' }}>
+              Ambos nodos están conectados al anillo y compartiendo el particionamiento de datos (50% de rango de tokens cada uno). Las escrituras y lecturas se resuelven de forma transparente en el clúster distribuido.
+            </p>
+          </div>
+        </div>
+      )}
 
-      <div className="section-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-        <div className="node-card glass">
+      <div className="section-grid" style={{ gridTemplateColumns: '1fr 1fr', marginTop: '1rem' }}>
+        {/* Node 1 */}
+        <div className="node-card glass" style={{ borderTop: '3px solid var(--accent-cyan)' }}>
           <div className="node-header">
             <div className="node-info">
-              <h4>PC Principal (Mani)</h4>
+              <h4>PC 1 (Principal - Tuya)</h4>
               <p>Servicios: Cassandra Nodo 1 + Backend API + Frontend</p>
             </div>
-            <span className="badge badge-success">ONLINE</span>
-          </div>
-          <div className="node-details">
-            <div className="detail-item">
-              <span className="detail-label">IP Tailscale</span>
-              <span>100.71.121.5</span>
-            </div>
-            <div className="detail-item">
-              <span className="detail-label">Puerto Cassandra</span>
-              <span>9042</span>
-            </div>
-            <div className="detail-item">
-              <span className="detail-label">Tipo de Nodo</span>
-              <span>Seed / Coordinador</span>
-            </div>
-            <div className="detail-item">
-              <span className="detail-label">Rango de Anillo</span>
-              <span>Tokens [-2^63 a 0]</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="node-card glass">
-          <div className="node-header">
-            <div className="node-info">
-              <h4>PC Secundaria</h4>
-              <p>Servicios: Cassandra Nodo 2</p>
-            </div>
-            <span className="badge badge-critical">OFFLINE</span>
+            <span className={`badge ${node1.is_up ? 'badge-success' : 'badge-critical'}`}>
+              {node1.is_up ? 'ONLINE' : 'OFFLINE'}
+            </span>
           </div>
           <div className="node-details">
             <div className="detail-item">
@@ -67,11 +113,42 @@ export default function ClusterMonitor() {
               <span>9042</span>
             </div>
             <div className="detail-item">
-              <span className="detail-label">Tipo de Nodo</span>
-              <span>Unido (Gossip)</span>
+              <span className="detail-label">Rol en el Anillo</span>
+              <span>Seed / Coordinador</span>
             </div>
             <div className="detail-item">
-              <span className="detail-label">Rango de Anillo</span>
+              <span className="detail-label">Rango de Tokens</span>
+              <span>Tokens [-2^63 a 0]</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Node 2 */}
+        <div className="node-card glass" style={{ borderTop: `3px solid ${node2.is_up ? 'var(--accent-purple)' : 'var(--accent-red)'}` }}>
+          <div className="node-header">
+            <div className="node-info">
+              <h4>PC 2 (Secundaria)</h4>
+              <p>Servicios: Cassandra Nodo 2</p>
+            </div>
+            <span className={`badge ${node2.is_up ? 'badge-success' : 'badge-critical'}`}>
+              {node2.is_up ? 'ONLINE' : 'OFFLINE'}
+            </span>
+          </div>
+          <div className="node-details">
+            <div className="detail-item">
+              <span className="detail-label">IP Tailscale</span>
+              <span>100.71.121.5</span>
+            </div>
+            <div className="detail-item">
+              <span className="detail-label">Puerto Cassandra</span>
+              <span>9042</span>
+            </div>
+            <div className="detail-item">
+              <span className="detail-label">Rol en el Anillo</span>
+              <span>Miembro del Anillo</span>
+            </div>
+            <div className="detail-item">
+              <span className="detail-label">Rango de Tokens</span>
               <span>Tokens [1 a 2^63-1]</span>
             </div>
           </div>
@@ -79,14 +156,18 @@ export default function ClusterMonitor() {
       </div>
 
       <div className="data-card glass" style={{ marginTop: '2rem' }}>
-        <h3><Server size={18} /> Verificación Nodetool (Mock)</h3>
-        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>docker exec -it cassandra-node1 nodetool status</p>
-        <div className="terminal-box" style={{ color: '#10b981' }}>
-{`--  Address       Load       Tokens  Owns (effective)  Host ID                               Rack
-UN  100.71.121.5  354.21 KiB 16      50.0%             8b5d3c8d-3921-4b1c-99d9-11c67e72ff08  rack1
-DN  100.114.64.8  324.95 KiB 16      50.0%             fa2c8db2-2321-482a-a921-77ee8ca41cc2  rack1`}
+        <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Cpu size={18} /> Verificación Nodetool Status
+          {loading && <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: 'var(--text-secondary)' }}>(actualizando...)</span>}
+        </h3>
+        <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontFamily: 'monospace', marginBottom: '0.5rem' }}>
+          docker exec -it cassandra-node1 nodetool status
+        </p>
+        <div className="terminal-box" style={{ whiteSpace: 'pre-wrap', lineHeight: '1.4' }}>
+          {clusterData.nodetool_status}
         </div>
       </div>
     </div>
   );
 }
+
