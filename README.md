@@ -119,22 +119,21 @@ PC 1 (PRINCIPAL - Mani)             PC 2 (SECUNDARIA)
 ```
 
 ### 2. Configuración de Red Mesh (Tailscale)
-Cassandra requiere comunicación TCP bidireccional directa en los puertos `7000` (Gossip) y `9042` (CQL Client). Al instalar Tailscale en ambas PCs, estas obtendrán IPs virtuales dedicadas (ej. `100.71.121.5` para PC 1 y `100.114.64.8` para PC 2), permitiendo la interconexión transparente sin abrir puertos en el router físico.
+Cassandra requiere comunicación TCP bidireccional directa en los puertos `7000` (Gossip) y `9042` (CQL Client). Al instalar Tailscale en ambas PCs, estas obtendrán IPs virtuales dedicadas (ej. `100.114.64.8` para PC 1 y `100.71.121.5` para PC 2), permitiendo la interconexión transparente sin abrir puertos en el router físico.
 
 Para obtener tu IP ejecuta en consola:
 ```bash
 tailscale ip -4
 ```
-
-### 3. Configuración en la PC Principal (PC 1: `100.71.121.5`)
+### 3. Configuración en la PC Principal (PC 1: `100.114.64.8`)
 El archivo `docker-compose.primary.yml` levanta el nodo Seed, el backend y el dashboard:
-* **CASSANDRA_SEEDS:** `100.71.121.5`
-* **CASSANDRA_BROADCAST_ADDRESS:** `100.71.121.5`
+* **CASSANDRA_SEEDS:** `100.114.64.8`
+* **CASSANDRA_BROADCAST_ADDRESS:** `100.114.64.8`
 
-### 4. Configuración en la PC Secundaria (PC 2: `100.114.64.8`)
+### 4. Configuración en la PC Secundaria (PC 2: `100.71.121.5`)
 El archivo `docker-compose.secondary.yml` levanta únicamente el nodo 2 de Cassandra:
-* **CASSANDRA_SEEDS:** `100.71.121.5` (Apunta a PC 1)
-* **CASSANDRA_BROADCAST_ADDRESS:** `100.114.64.8` (Su propia IP de Tailscale)
+* **CASSANDRA_SEEDS:** `100.114.64.8` (Apunta a PC 1)
+* **CASSANDRA_BROADCAST_ADDRESS:** `100.71.121.5` (Su propia IP de Tailscale)
 
 ---
 

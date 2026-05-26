@@ -5,7 +5,6 @@ import 'leaflet/dist/leaflet.css';
 import { districtsCochabamba } from '../../distritos_cochabamba (1)';
 import { subdistritosCochabamba } from '../../subdistritos_cochabamba';
 import { zonasCochabamba } from '../../zonas_cochabamba';
-import { dashboardMockData } from '../mockData';
 
 // Component to dynamically update map view center and zoom
 function ChangeView({ center }) {
@@ -166,53 +165,7 @@ function validateCoordinates(infra) {
   };
 }
 
-// Generate simulated client data for a property popup
-function generateClientData(infra) {
-  const nombres = ['Juan Pérez', 'María García', 'Carlos López', 'Ana Rodríguez', 'Pedro Quispe', 
-    'Rosa Mamani', 'Luis Flores', 'Carmen Vargas', 'Jorge Mendoza', 'Elena Torrez'];
-  const categorias = ['R1', 'R2', 'R3', 'R4', 'C', 'CE', 'I', 'P', 'S'];
-  const catDescripciones = {
-    'R1': 'Terrenos baldíos, casas abandonadas',
-    'R2': '1-2 habitaciones, una toma de agua',
-    'R3': 'Una planta funcional / en construcción',
-    'R4': 'Dos o más pisos con todas las dependencias',
-    'C': 'Comercial',
-    'CE': 'Comercial Especial',
-    'I': 'Industrial',
-    'P': 'Preferencial (fines sociales)',
-    'S': 'Social (carácter público)'
-  };
-  
-  // Use catastro number as seed for consistent data
-  const seed = infra.numero_catastro ? 
-    infra.numero_catastro.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0) : 
-    Math.floor(Math.random() * 1000);
-  
-  const cat = categorias[seed % categorias.length];
-  const consumoHora = ((seed % 50) + 5) / 10; // 0.5 - 5.5 m3/hora
-  const cuenta = `${1000 + (seed % 9000)}`;
-  const medidor = `MED-${String(seed % 10000).padStart(5, '0')}`;
-  const nombre = nombres[seed % nombres.length];
-  
-  // Monthly consumption history (last 6 months)
-  const consumoMensual = Array.from({length: 6}, (_, i) => {
-    const base = consumoHora * 720; // hours in month
-    const variation = (((seed + i * 7) % 30) - 15) / 100; 
-    return Math.round(base * (1 + variation));
-  });
-  
-  return {
-    cuenta,
-    nombre,
-    distrito: infra.distrito || 'N/D',
-    categoria: cat,
-    categoriaDesc: catDescripciones[cat],
-    medidor,
-    consumoHora: consumoHora.toFixed(1),
-    consumoMensual,
-    direccion: infra.direccion
-  };
-}
+
 
 export default function SemapaMap({ searchQuery: externalSearchQuery = '', selectedFilter = '(Todo) Cochabamba', onSearchTrigger }) {
   const { apiUrl, apiConnected } = useOutletContext();
@@ -221,7 +174,6 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
 
   const [viewMode, setViewMode] = useState('normal'); // 'normal' | 'heatmap'
   const [currentZoom, setCurrentZoom] = useState(12); // Track map zoom level!
-  const [showInfras, setShowInfras] = useState(true); // Default to true!
   const [infras, setInfras] = useState([]);
   const [loadingInfras, setLoadingInfras] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -231,6 +183,24 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
   const [clickedInfo, setClickedInfo] = useState(null);
   const [mapBounds, setMapBounds] = useState(null);
   const [selectedProperty, setSelectedProperty] = useState(null);
+
+  const [districtConsumptions, setDistrictConsumptions] = useState({});
+  const [activeCatastroId, setActiveCatastroId] = useState(null);
+  const [activeMedidorId, setActiveMedidorId] = useState(null);
+
+  const showInfras = !!(activeQuery || backendSearchCatastros.size > 0);
+
+  const districtPropertyCounts = useMemo(() => {
+    const counts = {};
+    infras.forEach(infra => {
+      const dist = infra.distrito;
+      if (dist !== undefined && dist !== null) {
+        const key = String(dist);
+        counts[key] = (counts[key] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [infras]);
 
 
   // Fetch real medidores from backend
@@ -252,9 +222,33 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
     fetchMedidores();
   }, [apiConnected, apiUrl, showMedidores]);
 
+  // Fetch real district consumption weights from backend
+  useEffect(() => {
+    if (!apiConnected) {
+      setDistrictConsumptions({});
+      return;
+    }
+    const fetchDistrictConsumptions = async () => {
+      try {
+        const res = await fetch(`${apiUrl}/consumo/distrito`);
+        if (res.ok) {
+          const data = await res.json();
+          const mapped = {};
+          data.forEach(item => {
+            mapped[item.distrito] = item.consumo_total_m3;
+          });
+          setDistrictConsumptions(mapped);
+        }
+      } catch (err) {
+        console.error("Error fetching district consumptions:", err);
+      }
+    };
+    fetchDistrictConsumptions();
+  }, [apiConnected, apiUrl]);
+
   // Load properties dynamically in a background Web Worker (subhilo) to prevent blocking the UI
   useEffect(() => {
-    if (!showInfras || infras.length > 0) return;
+    if (infras.length > 0) return;
 
     const loadingTimeoutId = setTimeout(() => {
       setLoadingInfras(true);
@@ -317,7 +311,7 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
       worker.terminate();
       URL.revokeObjectURL(workerUrl);
     };
-  }, [showInfras, infras.length]);
+  }, [infras.length]);
 
 
   // Trigger backend search when external search query changes
@@ -388,7 +382,7 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
 
   const filteredInfras = useMemo(() => {
     if (!activeQuery && backendSearchCatastros.size === 0) {
-      return infras.filter(infra => infra.randomShow);
+      return [];
     }
     return infras
       .filter((infra) => {
@@ -426,9 +420,9 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
     }
   }, [selectedFilter]);
 
-  // Compute visible markers in current viewport bounds (only for zoom >= 15 to keep 60 FPS)
+  // Compute visible markers in current viewport bounds
   const visibleInfras = useMemo(() => {
-    if (!showInfras || currentZoom < 15 || !mapBounds) {
+    if (!showInfras || !mapBounds) {
       return [];
     }
     const southWest = mapBounds.getSouthWest();
@@ -445,7 +439,7 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
       infra.longitud >= minLng &&
       infra.longitud <= maxLng
     );
-  }, [showInfras, currentZoom, mapBounds, filteredInfras]);
+  }, [showInfras, mapBounds, filteredInfras]);
 
   // Handle address searches in-memory
   const handleSearch = () => {
@@ -553,13 +547,14 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
       subdistrito: closestSubdist ? closestSubdist.name : 'No identificado',
       zona: closestZone ? closestZone.name : 'No identificada',
       lat: clickedLat,
-      lng: clickedLng
+      lng: clickedLng,
+      infraCount: distItem.infraCount
     });
   };
 
   // Handle property click - show detailed client info
   const handlePropertyClick = useCallback((infra) => {
-    const clientData = generateClientData(infra);
+    const clientData = getEmptyClientData(infra);
     setSelectedProperty({
       ...infra,
       client: clientData
@@ -568,15 +563,26 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
 
   // Helper to dynamically calculate polygon geometry representing the requested layer mode
   const getRenderPolygons = () => {
-    return districtsCochabamba.map(item => ({
-      key: item.id,
-      name: item.name,
-      color: item.color,
-      district: null,
-      sub_alcaldia: DISTRICT_TO_SUBALCALDIA[item.id]?.name || 'Desconocido',
-      positions: item.polygonPath.map(p => [p.lat, p.lng]),
-      weight: dashboardMockData.heatmapData[item.id] || (parseInt(item.id.replace('sector', '')) % 5) / 5
-    }));
+    const values = Object.values(districtConsumptions);
+    const maxCons = values.length > 0 ? Math.max(...values, 1) : 1;
+
+    return districtsCochabamba.map(item => {
+      const distNum = parseInt(item.id.replace('sector', ''), 10);
+      const consumption = districtConsumptions[distNum] || 0;
+      const weight = consumption / maxCons;
+      const infraCount = districtPropertyCounts[String(distNum)] || 0;
+
+      return {
+        key: item.id,
+        name: item.name,
+        color: item.color,
+        district: distNum,
+        infraCount: infraCount,
+        sub_alcaldia: DISTRICT_TO_SUBALCALDIA[item.id]?.name || 'Desconocido',
+        positions: item.polygonPath.map(p => [p.lat, p.lng]),
+        weight: weight
+      };
+    });
   };
 
 
@@ -586,7 +592,7 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
 
     useEffect(() => {
       if (!apiConnected || !infra.numero_catastro) {
-        setClientData(generateClientData(infra));
+        setClientData(getEmptyClientData(infra));
         setLoading(false);
         return;
       }
@@ -608,19 +614,19 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
                  direccion: data.direccion
                });
             } else {
-               setClientData({ ...generateClientData(infra), nombre: "Sin Contrato", cuenta: "N/A" });
+               setClientData(getEmptyClientData(infra));
             }
           } else {
-            setClientData(generateClientData(infra));
+            setClientData(getEmptyClientData(infra));
           }
         } catch (e) {
-          setClientData(generateClientData(infra));
+          setClientData(getEmptyClientData(infra));
         } finally {
           setLoading(false);
         }
       };
       fetchClient();
-    }, [infra]);
+    }, [infra, apiConnected, apiUrl]);
 
     if (loading) return <div style={{padding: '10px', textAlign: 'center'}}>Cargando datos del cliente...</div>;
     if (!clientData) return null;
@@ -719,30 +725,7 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
           )}
         </div>
 
-        {/* Property Addresses Toggle */}
-        <div style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.4rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-              {loadingInfras ? "Cargando..." : "Mostrar Direcciones"}
-            </span>
-            <input
-              type="checkbox"
-              checked={showInfras}
-              onChange={(e) => setShowInfras(e.target.checked)}
-              style={{ cursor: 'pointer' }}
-            />
-          </div>
-          {showInfras && currentZoom < 15 && (
-            <span style={{ fontSize: '0.65rem', color: '#f59e0b', fontWeight: 500 }}>
-              ⚠️ Acerque el mapa para ver las direcciones
-            </span>
-          )}
-          {showInfras && currentZoom >= 15 && (
-            <span style={{ fontSize: '0.65rem', color: '#10b981', fontWeight: 500 }}>
-              ✓ Direcciones visibles ({visibleInfras.length})
-            </span>
-          )}
-        </div>
+
 
         {/* Address Search Bar */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
@@ -805,6 +788,9 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
               <div style={{ marginBottom: '3px' }}><strong>Subalcaldía:</strong> {clickedInfo.subAlcaldia}</div>
               <div style={{ marginBottom: '3px' }}><strong>Subdistrito:</strong> {clickedInfo.subdistrito}</div>
               <div style={{ marginBottom: '3px' }}><strong>Zona:</strong> {clickedInfo.zona}</div>
+              <div style={{ marginTop: '4px', borderTop: '1px solid #e5e7eb', paddingTop: '4px' }}>
+                <strong>Infraestructuras:</strong> {clickedInfo.infraCount}
+              </div>
             </div>
           </Popup>
         )}
@@ -828,6 +814,9 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
               <Tooltip>
                 <div style={{ padding: '4px', color: '#111827', fontFamily: 'sans-serif' }}>
                   <strong style={{ display: 'block', fontSize: '0.9rem', marginBottom: '2px' }}>{item.name}</strong>
+                  <div style={{ fontSize: '0.75rem', marginBottom: '2px' }}>
+                    Infraestructuras: <strong>{item.infraCount}</strong>
+                  </div>
                   <span style={{ fontSize: '0.75rem', color: '#a855f7', fontWeight: 'bold' }}>Click para ver información</span>
                 </div>
               </Tooltip>
@@ -835,12 +824,12 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
           );
         })}
 
-        {/* Render Infrastructure Properties as small glowing dots only when zoomed in close (zoom >= 15) and visible within the map viewport */}
-        {showInfras && currentZoom >= 14 && visibleInfras.map((infra, idx) => (
+        {/* Render Infrastructure Properties as small glowing dots only when searched */}
+        {showInfras && visibleInfras.map((infra, idx) => (
           <CircleMarker
             key={infra.numero_catastro || idx}
             center={[infra.latitud, infra.longitud]}
-            radius={currentZoom >= 17 ? 6 : 4}
+            radius={currentZoom >= 17 ? 8 : 5}
             pathOptions={{
               color: infra.corrected ? '#f59e0b' : '#06b6d4',
               fillColor: infra.corrected ? '#fbbf24' : '#22d3ee',
@@ -848,14 +837,17 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
               weight: 1.5
             }}
             eventHandlers={{
-              click: () => handlePropertyClick(infra)
+              click: () => {
+                handlePropertyClick(infra);
+                setActiveCatastroId(infra.numero_catastro);
+              }
             }}
           >
-            <Popup maxWidth={320} minWidth={260}>
+            <Popup maxWidth={320} minWidth={260} onClose={() => setActiveCatastroId(null)}>
               <div style={{ color: '#111827', fontSize: '0.78rem', fontFamily: "'Plus Jakarta Sans', sans-serif", padding: '4px', minWidth: '240px' }}>
-                {/* Header */}
-
-                <PropertyPopupContent infra={infra} />
+                {activeCatastroId === infra.numero_catastro && (
+                  <PropertyPopupContent infra={infra} />
+                )}
               </div>
             </Popup>
           </CircleMarker>
@@ -868,20 +860,33 @@ export default function SemapaMap({ searchQuery: externalSearchQuery = '', selec
            else if (med.estado === 'Mantenimiento') mColor = '#f59e0b';
            else if (med.estado === 'Nuevo' || med.estado === 'Reacondicionado') mColor = '#8b5cf6';
            
+           const isSearched = med.medidor_iot && med.medidor_iot.toLowerCase() === activeQuery;
+           
            return (
             <CircleMarker
               key={`med-${med.medidor_iot}-${idx}`}
               center={[med.latitud, med.longitud]}
-              radius={currentZoom >= 16 ? 5 : 3}
+              radius={isSearched ? 10 : (currentZoom >= 16 ? 5 : 3)}
               pathOptions={{
-                color: '#ffffff',
-                fillColor: mColor,
+                color: isSearched ? '#f43f5e' : '#ffffff',
+                fillColor: isSearched ? '#f43f5e' : mColor,
                 fillOpacity: 1,
-                weight: 1
+                weight: isSearched ? 3 : 1
+              }}
+              eventHandlers={{
+                click: () => setActiveMedidorId(med.medidor_iot)
               }}
             >
-              <Popup maxWidth={320} minWidth={260}>
-                 <PropertyPopupContent infra={{ numero_catastro: med.numero_catastro, direccion: med.zona ? `Zona: ${med.zona}` : 'Ubicación del medidor', distrito: med.distrito }} />
+              <Popup maxWidth={320} minWidth={260} onClose={() => setActiveMedidorId(null)}>
+                 {activeMedidorId === med.medidor_iot && (
+                   <PropertyPopupContent 
+                     infra={{ 
+                       numero_catastro: med.numero_catastro, 
+                       direccion: med.zona ? `Zona: ${med.zona}` : 'Ubicación del medidor', 
+                       distrito: med.distrito
+                     }} 
+                   />
+                 )}
               </Popup>
             </CircleMarker>
           );

@@ -6,19 +6,13 @@ export default function ClusterMonitor() {
   const { apiUrl, apiConnected } = useOutletContext();
   const mockClusterData = useMemo(() => ({
     database_connected: false,
-    hosts: [
-      { address: '100.114.64.8', is_up: true, datacenter: 'dc1', rack: 'rack1', release_version: '4.1' },
-      { address: '100.71.121.5', is_up: false, datacenter: 'dc1', rack: 'rack1', release_version: '4.1' }
-    ],
-    nodetool_status: `Status=Up/Down\n|/ State=Normal/Leaving/Joining/Moving\n--  Address       Load       Tokens  Owns (effective)  Host ID                               Rack\nUN  100.114.64.8  354.21 KiB 16      50.0%             8b5d3c8d-3921-4b1c-99d9-11c67e72ff08  rack1\nDN  100.71.121.5  324.95 KiB 16      50.0%             fa2c8db2-2321-482a-a921-77ee8ca41cc2  rack1`
+    hosts: [],
+    nodetool_status: 'Desconectado del API'
   }), []);
   const [clusterData, setClusterData] = useState({
     database_connected: false,
-    hosts: [
-      { address: '100.114.64.8', is_up: true, datacenter: 'dc1', rack: 'rack1', release_version: '4.1' },
-      { address: '100.71.121.5', is_up: false, datacenter: 'dc1', rack: 'rack1', release_version: '4.1' }
-    ],
-    nodetool_status: `Status=Up/Down\n|/ State=Normal/Leaving/Joining/Moving\n--  Address       Load       Tokens  Owns (effective)  Host ID                               Rack\nUN  100.114.64.8  354.21 KiB 16      50.0%             8b5d3c8d-3921-4b1c-99d9-11c67e72ff08  rack1\nDN  100.71.121.5  324.95 KiB 16      50.0%             fa2c8db2-2321-482a-a921-77ee8ca41cc2  rack1`
+    hosts: [],
+    nodetool_status: 'Esperando conexión con el API para obtener el estado del clúster...'
   });
   const [loading, setLoading] = useState(false);
 
@@ -53,7 +47,7 @@ export default function ClusterMonitor() {
   const effectiveClusterData = apiConnected ? clusterData : mockClusterData;
 
   // Find statuses in loaded data
-  const node1 = effectiveClusterData.hosts.find(h => h.address === '100.114.64.8') || { is_up: true };
+  const node1 = effectiveClusterData.hosts.find(h => h.address === '100.114.64.8') || { is_up: false };
   const node2 = effectiveClusterData.hosts.find(h => h.address === '100.71.121.5') || { is_up: false };
 
   const isDegraded = !node2.is_up;

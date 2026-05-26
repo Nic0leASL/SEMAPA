@@ -5,15 +5,21 @@ services:
     image: cassandra:4.1
     container_name: cassandra-node1
     ports:
-      - "9042:9042"      # Puerto CQL nativo
-      - "7000:7000"      # Puerto de comunicación/gossip inter-nodo (Crítico para Tailscale)
-      - "7199:7199"      # Puerto JMX para nodetool status/ring
+      - "9042:9042" # Puerto CQL nativo
+      - "7000:7000" # Puerto de comunicación/gossip inter-nodo (Crítico para Tailscale)
+      - "7199:7199" # Puerto JMX para nodetool status/ring
     environment:
       - CASSANDRA_CLUSTER_NAME=SEMAPA_CLUSTER
-      - CASSANDRA_SEEDS=100.71.121.5                 # IP Tailscale de PC 1 (Seed)
-      - CASSANDRA_BROADCAST_ADDRESS=100.71.121.5     # Anuncia esta IP de Tailscale a otros nodos
-      - CASSANDRA_RPC_ADDRESS=0.0.0.0                # Escucha en todas las interfaces para conexiones de clientes
-      - CASSANDRA_BROADCAST_RPC_ADDRESS=100.71.121.5 # Anuncia esta IP para que la API se conecte
+
+      # Seed = tu PC principal
+      - CASSANDRA_SEEDS=100.114.64.8
+
+      # IP de la PC principal (esta máquina)
+      - CASSANDRA_BROADCAST_ADDRESS=100.114.64.8
+
+      - CASSANDRA_RPC_ADDRESS=0.0.0.0
+      - CASSANDRA_BROADCAST_RPC_ADDRESS=100.114.64.8
+
       - CASSANDRA_ENDPOINT_SNITCH=SimpleSnitch
       - CASSANDRA_DC=dc1
       - CASSANDRA_RACK=rack1
@@ -21,7 +27,7 @@ services:
     volumes:
       - cassandra_node1_data:/var/lib/cassandra
     healthcheck:
-      test: ["CMD-SHELL", "cqlsh -e 'describe keyspaces' || exit 1"]
+      test: [ "CMD-SHELL", "cqlsh -e 'describe keyspaces' || exit 1" ]
       interval: 15s
       timeout: 10s
       retries: 10
